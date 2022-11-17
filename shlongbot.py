@@ -1,28 +1,32 @@
 import time
 import datetime
-from ccxt import kucoinfutures as kcf
+import ccxt
 from pandas import DataFrame as dataframe
 from ta import volume, volatility, trend
 
+
 lever = 20
 tf = '1m'
-coin = 'MATIC/USDT:USDT'
-lots = 1
+coins = ['ETH/USDT:USDT']
+lots = 10
 
 
-exchange = kcf({
+exchange = ccxt.kucoinfutures({
     'apiKey': '',
     'secret': '',
     'password': '',
     'adjustForTimeDifference': True,
 })
 
+
 exchange.load_markets()
+exchange.cancel_all_orders(params={'stop': True})
+exchange.cancel_all_orders()
 
 
-def getData(coin, tf):
+def getData(coin, tf, source='mark'):
     time.sleep(exchange.rateLimit / 1000)
-    data = exchange.fetch_ohlcv(coin, tf, limit=500)
+    data = exchange.fetch_ohlcv(coin, tf, limit=500, params={'price': source})
     df = {}
     for i, col in enumerate(['date', 'open', 'high', 'low', 'close',
                              'volume']):
@@ -50,44 +54,6 @@ def getPositions():
 
 
 class order:
-    def buy():
-        if getPositions()[coin]['side'] != 'short' and price.close() > sma(200):
-            exchange.create_limit_order(
-                coin, 'buy', lots,
-                price.ask(), {'leverage': lever})
-        elif getPositions()[coin]['side'] == 'short':
-            exchange.create_limit_order(coin, 'buy', getPositions()[coin]['contracts'], price.bid(), {
-                'closeOrder': True, 'reduceOnly': True})
-        else:
-            print('Order not placed due to 200MA rule.')
-
-    def sell():
-        if getPositions()[coin]['side'] != 'long' and price.close() < sma(200):
-            exchange.create_limit_order(
-                coin, 'sell', lots, price.bid(), {'leverage': lever})
-        elif getPositions()[coin]['side'] == 'long':
-            exchange.create_limit_order(coin, 'sell', getPositions()[coin]['contracts'], price.ask(), {
-                'closeOrder': True, 'reduceOnly': True})
-        else:
-            print('Order not placed due to 200MA rule.')
-
-
-class price:
-    def open(period=-1):
-        return (getData(coin, tf)['close'].iloc[period-1] +
-                getData(coin, tf)['open'].iloc[period-1])/2
-
-    def close(period=-1):
-        return (getData(coin, tf)['close'].iloc[period] +
-                getData(coin, tf)['high'].iloc[period] +
-                getData(coin, tf)['low'].iloc[period] +
-                getData(coin, tf)['open'].iloc[period])/4
-
-    def high(period=-1):
-        return getData(coin, tf)['high'].iloc[period]
-
-    def low(period=-1):
-        return getData(coin, tf)['low'].iloc[period]
 
     def ask(index=0):
         return exchange.fetch_order_book(coin)['asks'][index][0]
@@ -95,71 +61,104 @@ class price:
     def bid(index=0):
         return exchange.fetch_order_book(coin)['bids'][index][0]
 
+    def buy():
+        if getPositions()[coin]['side'] != 'short':
+            exchange.create_stop_limit_order(
+                coin, 'buy', lots,
+                order.ask(), order.ask(), {'leverage': lever, 'stop': 'up'})
+        elif getPositions()[coin]['side'] == 'short':
+            exchange.create_stop_limit_order(coin, 'buy', getPositions()[coin]['contracts'], order.bid(), order.bid(), {
+                'closeOrder': True, 'reduceOnly': True, 'stop': 'down'})
 
-class bands:
-    def upper(window=20, devs=1, period=-1):
-        return volatility.bollinger_hband(getData(coin, tf)['close'], window, devs).iloc[period]
-
-    def mid(window=20, devs=1, period=-1):
-        return volatility.bollinger_mavg(getData(coin, tf)['close'], window, devs).iloc[period]
-
-    def lower(window=20, devs=1, period=-1):
-        return volatility.bollinger_lband(getData(coin, tf)['close'], window, devs).iloc[period]
+    def sell():
+        if getPositions()[coin]['side'] != 'long':
+            exchange.create_stop_limit_order(
+                coin, 'sell', lots, order.bid(), order.bid(), {'leverage': lever, 'stop': 'down'})
+        elif getPositions()[coin]['side'] == 'long':
+            exchange.create_stop_limit_order(coin, 'sell', getPositions()[coin]['contracts'], order.ask(), order.ask(), {
+                'closeOrder': True, 'reduceOnly': True, 'stop': 'up'})
 
 
-def mfi(window=8, period=-1):
+def Open(period=-1):
+    o = (getData(coin, tf)['close'].iloc[period-1] +
+         getData(coin, tf)['open'].iloc[period-1])/2
+    return o
+
+
+def Close(period=-1):
+    c = (getData(coin, tf)['close'].iloc[period] +
+         getData(coin, tf)['high'].iloc[period] +
+         getData(coin, tf)['low'].iloc[period] +
+         getData(coin, tf)['open'].iloc[period])/4
+    return c
+
+
+def High(period=-1):
+    h = getData(coin, tf)['high'].iloc[period] if getData(coin, tf)[
+        'high'].iloc[period] > Open() else Open()
+    return h
+
+
+def Low(period=-1):
+    l = getData(coin, tf)['low'].iloc[period] if getData(coin, tf)[
+        'low'].iloc[period] < Open() else Open()
+    return l
+
+
+class dc:
+    def hi(period=-1, window=20):
+        return volatility.donchian_channel_hband(getData(coin, tf)['high'], getData(coin, tf)['low'], getData(coin, tf)['close'], window).iloc[period]
+
+    def md(period=-1, window=20):
+        return volatility.donchian_channel_mband(getData(coin, tf)['high'], getData(coin, tf)['low'], getData(coin, tf)['close'], window).iloc[period]
+
+    def lo(period=-1, window=20):
+        return volatility.donchian_channel_lband(getData(coin, tf)['high'], getData(coin, tf)['low'], getData(coin, tf)['close'], window).iloc[period]
+
+
+def mfi(period=-1, window=3):
     return volume.money_flow_index(getData(coin, tf)['high'], getData(coin, tf)['low'], getData(coin, tf)['close'], getData(coin, tf)['volume'], window).iloc[period]
 
 
-def sma(window=5, ohlcv='close', period=-1):
-    return trend.sma_indicator(getData(coin, tf)[ohlcv], window).iloc[period]
+def ema(window=5, ohlcv='close', period=-1):
+    return trend.ema_indicator(getData(coin, tf)[ohlcv], window).iloc[period]
 
 
-print(getPositions())
+def signals(candles=5):
+    signals = []
+    for x in range(1, int(candles+1)):
+        z = 'bar' if x == 1 else 'bars'
+        print(f'looking back {x} {z}')
+        if dc.hi(-x) > dc.hi(-x-1):
+            signals.append('up')
+            print(f'possible buy signal on {x}')
+        if dc.lo(-x) < dc.lo(-x-1):
+            signals.append('down')
+            print(f'possible sell signal on {x}')
+    return signals
+
+
 while True:
-    try:
-        overbought = oversold = False
-        for x in range(1, 6):
-            if price.low(-x) <= bands.lower(20, 2, -x):
-                print(f'Oversold {x} bars ago.')
-                oversold = True
-            if price.high(-x) >= bands.upper(20, 2, -x):
-                print(f'Overbought {x} bars ago.')
-                overbought = True
-        if (oversold and not overbought and mfi(2) - mfi(3) >= 0) or (
-                getPositions()[coin]['side'] == 'long'):
-            print(f'Buy signal. Confirming reversal...')
-            count = 0
-            while not (mfi(2) and mfi(3)) <= 70:
-                try:
-                    time.sleep(exchange.rateLimit / 1000)
-                    count += 1
-                    print(f'Reversal confirmed. Buy cycles: {count}')
-                    order.buy()
-                except Exception as e:
-                    print(e)
-                    continue
-            else:
-                print('No confirmation. Ending Cycle.')
-                order.sell() if getPositions()[
-                    coin]['side'] == 'long' else exchange.cancel_all_orders()
-        if (overbought and not oversold and mfi(2) - mfi(3) <= 0) or (
-                getPositions()[coin]['side'] == 'short'):
-            print(f'Sell signal. Confirming reversal...')
-            count = 0
-            while not (mfi(2) and mfi(3)) >= 30:
-                try:
-                    time.sleep(exchange.rateLimit / 1000)
-                    count += 1
-                    print(f'Reversal confirmed. Sell cycles: {count}')
-                    order.sell()
-                except Exception as e:
-                    print(e)
-                    continue
-            else:
-                print('No confirmation. Ending Cycle.')
-                order.buy() if getPositions()[
-                    coin]['side'] == 'short' else exchange.cancel_all_orders()
-    except Exception as e:
-        print(e)
-        continue
+    time.sleep(exchange.rateLimit/1000)
+    for coin in coins:
+        try:
+            s = signals(3)
+            
+            print(getPositions())
+            if 'down' in s and ema(2, 'open') < ema(2, 'close') and mfi() > 50:
+                print('buy signal confirmed - placing order')
+                order.buy()
+
+            if 'up' in s and ema(2, 'open') > ema(2, 'close') and mfi() < 50:
+                print('sell signal confirmed - placing order')
+                order.sell()
+                
+            s = signals(5)
+            
+            if 'down' in s and dc.hi() > dc.hi(-2):
+                order.buy()
+            if 'up' in s and dc.lo() < dc.lo(-2):
+                order.sell()
+
+        except Exception as e:
+            print(e)
