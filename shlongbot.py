@@ -1,3 +1,4 @@
+# S H L O N G B O T X - v1.1.2
 import time
 import datetime
 import ccxt
