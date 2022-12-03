@@ -1,14 +1,15 @@
-# S H L O N G B O T X - v1.1.2
+# SHLONGBOTX v1.2.1
+from ta import volume, trend
 import time
 import datetime
 import ccxt
-from pandas import DataFrame as dataframe
-from ta import volume, volatility, trend, momentum
+from ta import trend, volume, volatility, momentum, others
+from pandas import DataFrame as dataframe, Series as series
 
 lever = 20
 tf = '1m'
-coins = ['REN/USDT:USDT']
-lots = 1
+coin = 'LUNC/USDT:USDT'
+lots = 10
 
 
 exchange = ccxt.kucoinfutures({
@@ -36,7 +37,7 @@ def getPositions():
         print(e)
 
 
-def getData(coin, tf, source='mark'):
+def getData(coin=coin, tf=tf, source='mark'):
     try:
         time.sleep(exchange.rateLimit / 1000)
         data = exchange.fetch_ohlcv(
@@ -58,158 +59,115 @@ def getData(coin, tf, source='mark'):
 
 
 def o(period=0):
-    try:
-        time.sleep(exchange.rateLimit / 1000)
-        if period != 0:
-            return getData(coin, tf)['open'].iloc[period]
-        elif period == 0:
-            return getData(coin, tf)['open']
-    except Exception as e:
-        print(e)
+    if period != 0:
+        return getData(coin, tf)['open'].iloc[period]
+    elif period == 0:
+        return getData(coin, tf)['open']
 
 
 def h(period=0):
-    try:
-        time.sleep(exchange.rateLimit / 1000)
-        if period != 0:
-            return getData(coin, tf)['high'].iloc[period]
-        elif period == 0:
-            return getData(coin, tf)['high']
-    except Exception as e:
-        print(e)
+    if period != 0:
+        return getData(coin, tf)['high'].iloc[period]
+    elif period == 0:
+        return getData(coin, tf)['high']
 
 
 def l(period=0):
-    try:
-        time.sleep(exchange.rateLimit / 1000)
-        if period != 0:
-            return getData(coin, tf)['low'].iloc[period]
-        elif period == 0:
-            return getData(coin, tf)['low']
-    except Exception as e:
-        print(e)
+    if period != 0:
+        return getData(coin, tf)['low'].iloc[period]
+    elif period == 0:
+        return getData(coin, tf)['low']
 
 
 def c(period=0):
-    try:
-        time.sleep(exchange.rateLimit / 1000)
-        if period != 0:
-            return getData(coin, tf)['close'].iloc[period]
-        elif period == 0:
-            return getData(coin, tf)['close']
-    except Exception as e:
-        print(e)
+    if period != 0:
+        return getData(coin, tf)['close'].iloc[period]
+    elif period == 0:
+        return getData(coin, tf)['close']
 
 
 def v(period=0):
-    try:
-        time.sleep(exchange.rateLimit / 1000)
-        if period != 0:
-            return getData(coin, tf)['volume'].iloc[period]
-        elif period == 0:
-            return getData(coin, tf)['volume']
-    except Exception as e:
-        print(e)
+    if period != 0:
+        return getData(coin, tf)['volume'].iloc[period]
+    elif period == 0:
+        return getData(coin, tf)['volume']
 
 
 class order:
-    def ask(index=0):
-        try:
-            time.sleep(exchange.rateLimit / 1000)
-            return exchange.fetch_order_book(coin)['asks'][index][0]
-        except Exception as e:
-            print(e)
+    ask = exchange.fetch_order_book(coin)['asks'][0][0]
+    bid = exchange.fetch_order_book(coin)['bids'][0][0]
 
-    def bid(index=0):
-        try:
-            time.sleep(exchange.rateLimit / 1000)
-            return exchange.fetch_order_book(coin)['bids'][index][0]
-        except Exception as e:
-            print(e)
-
-    def buy(price):
+    def buy(price=None):
         side = getPositions()[coin]['side']
+        price = order.bid if price == None else price
         try:
             time.sleep(exchange.rateLimit / 1000)
             if side != 'short':
-                exchange.create_stop_limit_order(
-                    coin, 'buy', lots, price, price, {'leverage': lever, 'stop': 'up'})
+                time.sleep(exchange.rateLimit / 1000)
+                exchange.create_limit_order(coin, 'buy', lots, price, {
+                    'leverage': lever, 'timeInForce': 'IOC'})
             elif side == 'short':
+                time.sleep(exchange.rateLimit / 1000)
                 exchange.cancel_all_orders()
-                exchange.cancel_all_orders(coin, {'stop': True})
-                exchange.create_stop_limit_order(coin, 'buy', getPositions()[coin]['contracts'], price, price, {
-                    'closeOrder': True, 'reduceOnly': True, 'stop': 'down'})
+                exchange.create_limit_order(coin, 'buy', lots, price, {
+                    'closeOrder': True, 'reduceOnly': True, 'timeInForce': 'IOC'})
         except Exception as e:
             print(e)
 
-    def sell(price):
+    def sell(price=None):
+        price = order.ask if price == None else price
         side = getPositions()[coin]['side']
         try:
             time.sleep(exchange.rateLimit / 1000)
             if side != 'long':
-                exchange.create_stop_limit_order(
-                    coin, 'sell', lots, price, price, {'leverage': lever, 'stop': 'down'})
+                time.sleep(exchange.rateLimit / 1000)
+                exchange.create_limit_order(
+                    coin, 'sell', lots, price, {'leverage': lever, 'timeInForce': 'IOC'})
             elif side == 'long':
+                time.sleep(exchange.rateLimit / 1000)
                 exchange.cancel_all_orders()
-                exchange.cancel_all_orders(coin, {'stop': True})
-                exchange.create_stop_limit_order(coin, 'sell', getPositions()[coin]['contracts'], price, price, {
-                                                 'closeOrder': True, 'reduceOnly': True, 'stop': 'up'})
+                exchange.create_limit_order(coin, 'sell', lots, price, {
+                    'closeOrder': True, 'reduceOnly': True, 'timeInForce': 'IOC'})
         except Exception as e:
             print(e)
 
 
 def Open(period=-1):
-    try:
-        open = (c(period-1) + o(period-1))/2
-        return open
-    except Exception as e:
-        print(e)
+    open = (c(period-1) + o(period-1))/2
+    return open
 
 
 def Close(period=-1):
-    try:
-        close = (o(period) + h(period) + l(period) + c(period))/4
-        return close
-    except Exception as e:
-        print(e)
+    close = (o(period) + h(period) + l(period) + c(period))/4
+    return close
 
 
-def ema(df, window, period=-1):
-    return trend.ema_indicator(df, window).iloc[period]
+def ema(window=60, period=-1):
+    return trend.ema_indicator(c(), window).iloc[period]
 
 
-def stoch(period=-1):
-    return momentum.stoch(h(), l(), c(), 20, 3).iloc[period]
+def gator(s=5, m=3, f=2):
+    return 1 if ema(f, -1) > ema(m, -2) > ema(s, -3) else -1 if ema(f, -1) < ema(m, -2) < ema(s, -3) else 0
 
 
-def signal(period=-1):
-    return momentum.stoch_signal(h(), l(), c(), 20, 3).iloc[period]
+def mfi(window=5, smooth=3, period=-1):
+    mf = trend.sma_indicator(volume.money_flow_index(
+        h(), l(), c(), v(), window), smooth)
+    mfi = mf.iloc[period]
+    signal = momentum.kama(mf, smooth).iloc[period]
+    return 1 if mfi > signal else -1 if signal > mfi else 0
 
 
 while True:
-    for coin in coins:
-        if Close() > ema(c(), 200):
-            try:
-                if Open(-3) > Close(-3) and Open(-2) > Close(-2) and Open() < Close():
-                    while ema(c(), 2) > ema(c(), 3) > ema(c(), 5):
-                        order.buy(order.bid())
-                if stoch() < 20 and stoch() > signal() and Open() < Close():
-                    order.buy(order.bid())
-                if getPositions()[coin]['side'] == 'long':
-                    if stoch() > 80:
-                        order.sell(order.ask())
-            except Exception as e:
-                print(e)
-
-        elif Close() < ema(c(), 200):
-            try:
-                if Open(-3) < Close(-3) and Open(-2) < Close(-2) and Open() > Close():
-                    while ema(c(), 2) < ema(c(), 3) < ema(c(), 5):
-                        order.sell(order.ask())
-                if stoch() > 80 and stoch() < signal() and Open() > Close():
-                    order.sell(order.ask())
-                if getPositions()[coin]['side'] == 'short':
-                    if stoch() < 20:
-                        order.buy(order.bid())
-            except Exception as e:
-                print(e)
+    try:
+        print(f'MFI: {mfi()}\nGTR: {gator()}')
+        r = mfi() + gator()
+        if r == 2 and Close() > Open() and Close(-2) > Open(-2):
+            print('buy')
+            order.buy()
+        elif r == -2 and Close() < Open() and Close(-2) < Open(-2):
+            print('sell')
+            order.sell()
+    except Exception as e:
+        print(e)
+        continue
