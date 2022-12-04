@@ -1,14 +1,14 @@
-# SHLONGBOTX v1.2.1
+# SBX v1.2.1
 from ta import volume, trend
 import time
 import datetime
 import ccxt
-from ta import trend, volume, volatility, momentum, others
-from pandas import DataFrame as dataframe, Series as series
+from ta import trend, volume, momentum
+from pandas import DataFrame as dataframe
 
 lever = 20
 tf = '1m'
-coin = 'LUNC/USDT:USDT'
+coin = 'ETH/USDT:USDT'
 lots = 10
 
 
@@ -100,36 +100,22 @@ class order:
     def buy(price=None):
         side = getPositions()[coin]['side']
         price = order.bid if price == None else price
-        try:
-            time.sleep(exchange.rateLimit / 1000)
-            if side != 'short':
-                time.sleep(exchange.rateLimit / 1000)
-                exchange.create_limit_order(coin, 'buy', lots, price, {
-                    'leverage': lever, 'timeInForce': 'IOC'})
-            elif side == 'short':
-                time.sleep(exchange.rateLimit / 1000)
-                exchange.cancel_all_orders()
-                exchange.create_limit_order(coin, 'buy', lots, price, {
-                    'closeOrder': True, 'reduceOnly': True, 'timeInForce': 'IOC'})
-        except Exception as e:
-            print(e)
+        if side != 'short':
+            exchange.create_limit_order(coin, 'buy', lots, price, {
+                'leverage': lever, 'timeInForce': 'IOC'})
+        elif side == 'short':
+            exchange.create_limit_order(coin, 'buy', lots, price, {
+                'closeOrder': True, 'reduceOnly': True, 'timeInForce': 'IOC'})
 
     def sell(price=None):
         price = order.ask if price == None else price
         side = getPositions()[coin]['side']
-        try:
-            time.sleep(exchange.rateLimit / 1000)
-            if side != 'long':
-                time.sleep(exchange.rateLimit / 1000)
-                exchange.create_limit_order(
-                    coin, 'sell', lots, price, {'leverage': lever, 'timeInForce': 'IOC'})
-            elif side == 'long':
-                time.sleep(exchange.rateLimit / 1000)
-                exchange.cancel_all_orders()
-                exchange.create_limit_order(coin, 'sell', lots, price, {
-                    'closeOrder': True, 'reduceOnly': True, 'timeInForce': 'IOC'})
-        except Exception as e:
-            print(e)
+        if side != 'long':
+            exchange.create_limit_order(
+                coin, 'sell', lots, price, {'leverage': lever, 'timeInForce': 'IOC'})
+        elif side == 'long':
+            exchange.create_limit_order(coin, 'sell', lots, price, {
+                'closeOrder': True, 'reduceOnly': True, 'timeInForce': 'IOC'})
 
 
 def Open(period=-1):
@@ -163,11 +149,13 @@ while True:
         print(f'MFI: {mfi()}\nGTR: {gator()}')
         r = mfi() + gator()
         if r == 2 and Close() > Open() and Close(-2) > Open(-2):
-            print('buy')
             order.buy()
-        elif r == -2 and Close() < Open() and Close(-2) < Open(-2):
-            print('sell')
+        if r == -2 and Close() < Open() and Close(-2) < Open(-2):
             order.sell()
+        if getPositions()[coin]['side'] == 'long' and r < 0:
+            order.sell()
+        if getPositions()[coin]['side'] == 'short' and r > 0:
+            order.buy()
     except Exception as e:
         print(e)
         continue
