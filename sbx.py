@@ -1,18 +1,32 @@
 # SBX v1.2.1
-from ta import volume, trend
 import time
 import datetime
-import ccxt
-from ta import trend, volume, momentum
-from pandas import DataFrame as dataframe
+from ccxt import kucoinfutures as kcf
+from ta import trend, momentum
+from pandas import DataFrame as dataframe, Series as series
 
-lever = 20
-tf = '1m'
-coin = 'ETH/USDT:USDT'
-lots = 10
+# List of one or more timeframes to check for signals.
+# timeframes = ['1m', '5m', '15m', '1h', '4h', '1d']
+timeframes = ['1m']
 
+# Maximum leverage to use. If this number is higher than is available... 
+# (if set to 100 but the max is 20, for example...), 
+# ...the maximum leverage is used instead
+# (...the order will be placed with the leverage set to 20 rather than 100). 
+max_leverage = 5
 
-exchange = ccxt.kucoinfutures({
+# Option to specify which coin to trade. 
+# If set to None and no positions are open, the highest gainer is automatically selected.
+# If set to None and there is an open position, the bot will continue to trade the open position.
+# picker_override = 'BTC/USDT:USDT'
+picker_override = None
+
+# Option to exclude coins. If no exclusions, leave list empty.
+# excludes = ['SOS/USDT:USDT', 'DOGE/USDT:USDT']
+excludes = []
+
+# Input API credentials here to begin. Be safe! Have fun!
+exchange = kcf({
     'apiKey': '',
     'secret': '',
     'password': '',
@@ -20,142 +34,216 @@ exchange = ccxt.kucoinfutures({
 })
 
 
+### End of configuration! ###
+
+
+exchange.load_markets()
+
+def picker():
+    if picker_override is not None:
+        return picker_override
+    markets = exchange.load_markets(True)
+    picker = {}
+    coin = str()
+    for v in markets:
+        if v in excludes:
+            continue
+        else:
+            picker[v] = [markets[v]['info']['priceChgPct']]
+    pick = max(picker.values())
+    for i, v in picker.items():
+        if pick == v:
+            coin = i
+            break
+    return coin
+
+
+coin = picker()
+
+for pos in exchange.fetch_positions():
+    if picker() == pos['symbol']:
+        continue
+    else:
+        coin = pos['symbol']
+        break
+print(coin)
+
+
 def getPositions():
-    try:
-        time.sleep(exchange.rateLimit / 1000)
-        positions = exchange.fetch_positions()
-        df = {}
-        df[coin] = {}
-        for col in ['contracts', 'side', 'percentage', 'unrealizedPnl', 'liquidationPrice', 'markPrice']:
-            df[coin][col] = 0
-            for v in positions:
-                if v['symbol'] == coin:
-                    df[coin][col] = v[col]
-            DF = dataframe(df)
-        return DF
-    except Exception as e:
-        print(e)
+    time.sleep(exchange.rateLimit / 1000)
+    positions = exchange.fetch_positions()
+    df = {}
+    df[coin] = {}
+    for col in ['contracts', 'side', 'percentage', 'liquidationPrice']:
+        df[coin][col] = 0
+        for v in positions:
+            if v['symbol'] == coin:
+                df[coin][col] = v[col]
+        DF = dataframe(df)
+    return DF
 
 
-def getData(coin=coin, tf=tf, source='mark'):
-    try:
-        time.sleep(exchange.rateLimit / 1000)
-        data = exchange.fetch_ohlcv(
-            coin, tf, params={'price': source})
-        df = {}
-        for i, col in enumerate(['date', 'open', 'high', 'low', 'close',
-                                'volume']):
-            df[col] = []
-            for row in data:
-                if col == 'date':
-                    df[col].append(
-                        datetime.datetime.fromtimestamp(row[i] / 1000))
-                else:
-                    df[col].append(row[i])
-            DF = dataframe(df)
-        return DF
-    except Exception as e:
-        print(e)
+def getData(coin, tf, source='mark'):
+    time.sleep(exchange.rateLimit / 1000)
+    data = exchange.fetch_ohlcv(coin, tf, params={'price': source})
+    df = {}
+    for i, col in enumerate(['date', 'open', 'high', 'low', 'close',
+                             'volume']):
+        df[col] = []
+        for row in data:
+            if col == 'date':
+                df[col].append(datetime.datetime.fromtimestamp(row[i] / 1000))
+            else:
+                df[col].append(row[i])
+    df = dataframe(df).drop('date', axis=1)
+    df['open_ha'] = df['low_ha'] = df['high_ha'] = series(dtype=float)
+    for i in range(0, len(df)):
+        if i == 0:
+            df['open_ha'][i] = (df['open'][i] + df['close'][i]) / 2
+        else:
+            df['open_ha'][i] = (df['open'][i - 1] + df['close'][i - 1]) / 2
+        df['high_ha'][i] = max(df['open'][i], df['close'][i], df['high'][i])
+        df['low_ha'][i] = min(df['open'][i], df['close'][i], df['low'][i])
+    df['close_ha'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
+    return dataframe(df)
 
 
-def o(period=0):
-    if period != 0:
-        return getData(coin, tf)['open'].iloc[period]
-    elif period == 0:
-        return getData(coin, tf)['open']
+def ema(window=21, df=getData(coin, tf)['close_ha']):
+    return trend.ema_indicator(df, window)
 
 
-def h(period=0):
-    if period != 0:
-        return getData(coin, tf)['high'].iloc[period]
-    elif period == 0:
-        return getData(coin, tf)['high']
+def stoch(window=14, smooth=3):
+    stoc = momentum.stoch(
+        getData(coin, tf)['high'],
+        getData(coin, tf)['low'],
+        getData(coin, tf)['close'],
+        window, smooth)
+    signal = momentum.stoch_signal(
+        getData(coin, tf)['high'],
+        getData(coin, tf)['low'],
+        getData(coin, tf)['close'],
+        window, smooth)
+    return {'stoch': stoc, 'signal': signal, 'hist': stoc - signal}
 
 
-def l(period=0):
-    if period != 0:
-        return getData(coin, tf)['low'].iloc[period]
-    elif period == 0:
-        return getData(coin, tf)['low']
+class Order:
+    def __init__(self):
+        self.bid = exchange.fetch_l2_order_book(coin)['bids'][0][0]
+        self.ask = exchange.fetch_l2_order_book(coin)['asks'][0][0]
+        self.mark = (self.ask + self.bid) / 2
+        self.market = exchange.market(coin)
+        self.side = getPositions()[coin]['side']
+        self.lever = self.market['info']['maxLeverage']
+        if max_leverage < self.lever:
+            self.lever = max_leverage
+        self.lotSize = self.market['contractSize']
+        self.balance = exchange.fetch_balance()['USDT'][
+            'free'] * 0.99
+        self.qty = self.balance / self.mark
+        if self.qty > self.lotSize:
+            self.lots = int(self.qty / self.lotSize) * self.lever
+        elif self.qty < self.lotSize:
+            self.lots = int(self.lotSize / self.qty) * self.lever
 
-
-def c(period=0):
-    if period != 0:
-        return getData(coin, tf)['close'].iloc[period]
-    elif period == 0:
-        return getData(coin, tf)['close']
-
-
-def v(period=0):
-    if period != 0:
-        return getData(coin, tf)['volume'].iloc[period]
-    elif period == 0:
-        return getData(coin, tf)['volume']
-
-
-class order:
-    ask = exchange.fetch_order_book(coin)['asks'][0][0]
-    bid = exchange.fetch_order_book(coin)['bids'][0][0]
-
-    def buy(price=None):
-        side = getPositions()[coin]['side']
-        price = order.bid if price == None else price
-        if side != 'short':
-            exchange.create_limit_order(coin, 'buy', lots, price, {
-                'leverage': lever, 'timeInForce': 'IOC'})
-        elif side == 'short':
-            exchange.create_limit_order(coin, 'buy', lots, price, {
-                'closeOrder': True, 'reduceOnly': True, 'timeInForce': 'IOC'})
-
-    def sell(price=None):
-        price = order.ask if price == None else price
-        side = getPositions()[coin]['side']
-        if side != 'long':
+    def buy(self, price):
+        print('BUY')
+        if self.side != 'short':
             exchange.create_limit_order(
-                coin, 'sell', lots, price, {'leverage': lever, 'timeInForce': 'IOC'})
-        elif side == 'long':
-            exchange.create_limit_order(coin, 'sell', lots, price, {
-                'closeOrder': True, 'reduceOnly': True, 'timeInForce': 'IOC'})
+                coin,
+                'buy',
+                self.lots,
+                price,
+                {'leverage': self.lever,
+                 'timeInForce': 'GTC'})
+        elif self.side == 'short':
+            exchange.create_limit_order(
+                coin,
+                'buy',
+                self.lots,
+                price,
+                {'closeOrder': True,
+                 'reduceOnly': True,
+                 'timeInForce': 'GTC'})
 
+    def sell(self, price):
+        print('SELL')
+        if self.side != 'long':
+            exchange.create_limit_order(
+                coin,
+                'sell',
+                self.lots,
+                price,
+                {'leverage': self.lever,
+                 'timeInForce': 'GTC'})
 
-def Open(period=-1):
-    open = (c(period-1) + o(period-1))/2
-    return open
-
-
-def Close(period=-1):
-    close = (o(period) + h(period) + l(period) + c(period))/4
-    return close
-
-
-def ema(window=60, period=-1):
-    return trend.ema_indicator(c(), window).iloc[period]
-
-
-def gator(s=5, m=3, f=2):
-    return 1 if ema(f, -1) > ema(m, -2) > ema(s, -3) else -1 if ema(f, -1) < ema(m, -2) < ema(s, -3) else 0
-
-
-def mfi(window=5, smooth=3, period=-1):
-    mf = trend.sma_indicator(volume.money_flow_index(
-        h(), l(), c(), v(), window), smooth)
-    mfi = mf.iloc[period]
-    signal = momentum.kama(mf, smooth).iloc[period]
-    return 1 if mfi > signal else -1 if signal > mfi else 0
+        elif self.side == 'long':
+            exchange.create_limit_order(
+                coin,
+                'sell',
+                self.lots,
+                price,
+                {'closeOrder': True,
+                 'reduceOnly': True,
+                 'timeInForce': 'GTC'})
 
 
 while True:
     try:
-        print(f'MFI: {mfi()}\nGTR: {gator()}')
-        r = mfi() + gator()
-        if r == 2 and Close() > Open() and Close(-2) > Open(-2):
-            order.buy()
-        if r == -2 and Close() < Open() and Close(-2) < Open(-2):
-            order.sell()
-        if getPositions()[coin]['side'] == 'long' and r < 0:
-            order.sell()
-        if getPositions()[coin]['side'] == 'short' and r > 0:
-            order.buy()
+        if getPositions()[coin]['side'] is None:
+            coin = picker()
+
+        order = Order()
+
+
+        if (
+                stoch(5, 3)['hist'].iloc[-1] < 0 and
+                ema(5).iloc[-1] >
+                ema(8).iloc[-1] >
+                ema(13).iloc[-1] and
+                getData(coin, tf)['close_ha'].iloc[-1] <
+                getData(coin, tf)['open_ha'].iloc[-1] and
+                getData(coin, tf)['close_ha'].iloc[-2] <
+                getData(coin, tf)['open_ha'].iloc[-2]):
+                while getPositions()[coin]['side'] != 'short':
+                    try:
+                        order.sell(order.ask)
+                    except Exception:
+                        time.sleep(exchange.rateLimit/1000)
+                        exchange.cancel_all_orders()
+                        continue
+
+
+        if (
+                stoch(5, 3)['hist'].iloc[-1] > 0 and
+                ema(5).iloc[-1] <
+                ema(8).iloc[-1] <
+                ema(13).iloc[-1] and
+                getData(coin, tf)['close_ha'].iloc[-1] >
+                getData(coin, tf)['open_ha'].iloc[-1] and
+                getData(coin, tf)['close_ha'].iloc[-2] >
+                getData(coin, tf)['open_ha'].iloc[-2]):
+                while getPositions()[coin]['side'] != 'long':
+                    try:
+                        order.buy(order.bid)
+                    except Exception:
+                        time.sleep(exchange.rateLimit/1000)
+                        exchange.cancel_all_orders()
+                        continue
+
+
+        if (
+                getPositions()[coin]['side'] == 'long' and
+                stoch(5, 3)['hist'].iloc[-1] < 0):
+            order.sell(order.bid)
+
+
+        if (
+                getPositions()[coin]['side'] == 'short' and
+                stoch(5, 3)['hist'].iloc[-1] > 0):
+            order.buy(order.ask)
+
+
     except Exception as e:
         print(e)
+        time.sleep(exchange.rateLimit/1000)
         continue
