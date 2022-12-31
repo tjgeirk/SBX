@@ -13,7 +13,7 @@ def KLE(data:DataFrame, window:int=7) -> DataFrame:
     resist = (max(df)*resist_pct)
     return {'sup':support, 'res':resist}
     
-book = lambda coin: exchange.fetch_order_book(coin:str='BTC/USDT:USDT')
+book = lambda coin: exchange.fetch_order_book(coin)
 
 for i,v in enumerate(book()['asks'][0]):
     if max(book()['asks'][1]) == book()['asks'][1][i]:
