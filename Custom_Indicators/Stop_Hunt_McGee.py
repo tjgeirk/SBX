@@ -2,7 +2,7 @@
 from statistics import mean
 from pandas import DataFrame
 
-def KLE(data:DataFrame, window:int=21) -> DataFrame:
+def stop_hunt_mcgee(data:DataFrame, window:int=21) -> DataFrame:
     df = {'highs':[],'lows':[]}
     for x in range(1, window+1):
         df['highs'].append(data['high'].iloc[-x])
