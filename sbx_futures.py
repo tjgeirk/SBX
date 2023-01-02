@@ -1,18 +1,18 @@
-
 # SBX v1.2.1
 import time
 import ccxt
-from ta import trend, momentum, volatility
+from statistics import mean, median, mode
+from ta import trend, momentum, volatility, volume
 from pandas import DataFrame as dataframe, Series as series
+from matplotlib import pyplot as plt
 
 tf = '1m'
-max_leverage = 1
-max_open_trades = 5
+max_leverage = 5
 picker_override = None
+lots_override = None
 exclude = []
 
-exchange = ccxt.kucoinfutures(
-    {
+exchange = ccxt.kucoinfutures({
         'apiKey': '',
         'secret': '',
         'password': '',
@@ -22,27 +22,18 @@ exchange = ccxt.kucoinfutures(
 
 
 def picker():
-    if picker_override is not None:
-        return picker_override
-    else:
-        markets = exchange.load_markets(True)
-        coins = []
-        while len(coins) < max_open_trades:
-            picker = {}
-            for v in markets:
-                if v in (exclude or coins):
-                    continue
-                else:
-                    picker[v] = [markets[v]['info']['priceChgPct']]
-            pick = max(picker.values())
-            for i, v in picker.items():
-                if pick == v:
-                    coin = i
-                    coins.append(coin)
-                    break
-
-    if len(coins) == max_open_trades:
-        return coins
+    markets = exchange.load_markets(True)
+    picker = {}
+    for v in markets:
+        if v in exclude:
+            continue
+        else:
+            picker[v] = [markets[v]['info']['priceChgPct']]
+    pick = max(picker.values())
+    for i, v in picker.items():
+        if pick == v:
+            coin = i
+            return coin
 
 
 def getPosition(coin):
@@ -74,140 +65,47 @@ def getData(coin, tf=tf, source='mark'):
         data['low'][i] = min(df[1][i], df[4][i], df[3][i])
     return dataframe(data)
 
+def buyPrice():
+    price = None
+    while price == None:
+        bid_max = max(exchange.fetch_order_book(coin)['bids'][1])
+        for x, y in exchange.fetch_order_book(coin)['bids']:
+            if y == bid_max:
+                price = x
+    return price
+
+
+def sellPrice():
+    price = None
+    while price == None:
+        ask_max = max(exchange.fetch_order_book(coin)['asks'][1])
+        for x, y in exchange.fetch_order_book(coin)['asks']:
+            if y == ask_max:
+                price = x
+    return price
 
 data = lambda ohlcv='close': getData(coin, tf)[ohlcv]
 
-
-def getOrderInfo(coin):
-    market = exchange.market(coin)
-    lever = market['info']['maxLeverage']
-    if max_leverage < lever:
-        lever = max_leverage
-    lotSize = market['contractSize']
-    balance = exchange.fetch_balance()['USDT']['free'] * 0.5
-    qty = balance / data('close').iloc[-1]
-    if qty > lotSize:
-        lots = int(qty / lotSize) * lever
-    elif qty < lotSize:
-        lots = int(lotSize / qty) * lever
-    else:
-        return {'lots': 1, 'lever': lever}
-    return {'lots': lots, 'lever': lever}
-
-
-class Order:
-    def __init__(self):
-        self.bid = exchange.fetch_l2_order_book(coin)['bids'][0][0]
-        self.ask = exchange.fetch_l2_order_book(coin)['asks'][0][0]
-        self.side = getPosition(coin)['side']
-        self.lever = getOrderInfo(coin)['lever']
-        self.lots = getOrderInfo(coin)['lots']
-
-    def buy(self, price=None):
-        try:
-            print('BUY')
-            if self.side != 'short':
-                price = self.ask if price is None else price
-                exchange.create_limit_order(
-                    coin,
-                    'buy',
-                    self.lots,
-                    price,
-                    {'leverage': self.lever, 'timeInForce': 'GTC'},
-                )
-
-            elif self.side == 'short':
-                price = self.bid if price is None else price
-                exchange.create_limit_order(
-                    coin,
-                    'buy',
-                    self.lots,
-                    price,
-                    {'closeOrder': True, 'reduceOnly': True, 'timeInForce': 'GTC'},
-                )
-        except Exception as e:
-            print(e)
-
-    def sell(self, price=None):
-        try:
-            print('SELL')
-            if self.side != 'long':
-                price = self.bid if price is None else price
-                exchange.create_limit_order(
-                    coin,
-                    'sell',
-                    self.lots,
-                    price,
-                    {'leverage': self.lever, 'timeInForce': 'GTC'},
-                )
-
-            elif self.side == 'long':
-                price = self.ask if price is None else price
-                exchange.create_limit_order(
-                    coin,
-                    'sell',
-                    self.lots,
-                    price,
-                    {'closeOrder': True, 'reduceOnly': True, 'timeInForce': 'GTC'},
-                )
-        except Exception as e:
-            print(e)
-
-
-ema = lambda window, df='close', period=- \
-    1: trend.ema_indicator(data(df), window).iloc[period]
-
-kama = lambda window=3, period=-1: \
-    momentum.kama(data('close'), window).iloc[period]
-
-
-def stoch(window=13, smooth=3, period=-1):
-    stoch = momentum.stoch(data('high'), data(
-        'low'), data('close'), window, smooth)
-    signal = momentum.stoch_signal(data('high'), data(
-        'low'), data('close'), window, smooth)
-    return {'stoch': stoch.iloc[period], 'signal': signal.iloc[period], 'hist': (stoch-signal).iloc[period]}
-
-
-def bot(coin):
-    order = Order()
-    print(coin)
-
-    if (ema(5) < ema(8) < ema(13)
-        and data('close').iloc[-1] > ema(5)
-        and data('close').iloc[-2] > ema(5, 'close', -2)
-        and stoch()['hist'] > 0
-            and stoch()['stoch'] < 30):
-        order.buy()
-
-    if (ema(5) > ema(8) > ema(13)
-        and data('close').iloc[-1] < ema(5)
-        and data('close').iloc[-2] < ema(5, 'close', -2)
-        and stoch()['hist'] < 0
-            and stoch()['stoch'] > 70):
-        order.sell()
-
-    if getPosition(coin)['side'] == 'long':
-        exchange.create_stop_limit_order(
-            coin, 'sell', 1, kama(), kama(), {
-                'closeOrder':True, 
-                'reduceOnly':True, 
-                'stop':'down'})
-
-    if getPosition(coin)['side'] == 'short':
-        exchange.create_stop_limit_order(
-            coin, 'buy', 1, kama(), kama(), {
-                'closeOrder': True,
-                'reduceOnly': True,
-                'stop': 'up'})
+ema = lambda window, df='close': trend.ema_indicator(data(df), window).iloc[-1]
 
 while True:
     try:
-        for coin in series(picker()):
-            bot(coin)
-            time.sleep(exchange.rateLimit / 1000)
+        exchange.load_markets()
+        coin = picker()
+        lever = exchange.market(coin)['info']['maxLeverage'] if (exchange.market(coin)['info']['maxLeverage'] < max_leverage) else max_leverage
+        balance = exchange.fetch_balance()['USDT']['free'] * 0.1 * lever
+
+        if (data('close').iloc[-1] > ema(200)):
+            q = balance / buyPrice() if lots_override == None else lots_override
+            (lambda: exchange.create_stop_limit_order(coin, 'buy', q, buyPrice(), buyPrice(), {'leverage':lever, 'stop':'down'}))()
+            (lambda: exchange.create_stop_limit_order(coin, 'sell', q, sellPrice(), sellPrice(), {'closeOrder':True, 'stop':'up'}))()
+    
+        if (data('close').iloc[-1] < ema(200)):
+            q = balance / sellPrice() if lots_override == None else lots_override
+            (lambda: exchange.create_stop_limit_order(coin, 'sell', q, sellPrice(), sellPrice(), {'leverage':lever, 'stop':'up'}))()
+            (lambda: exchange.create_stop_limit_order(coin, 'buy', q, buyPrice(), buyPrice(), {'closeOrder':True, 'stop':'down'}))()
+
     except Exception as e:
         print(e)
         time.sleep(exchange.rateLimit / 1000)
-        exchange.cancel_all_orders()
         continue
