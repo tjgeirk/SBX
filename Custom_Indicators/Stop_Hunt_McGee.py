@@ -1,5 +1,5 @@
 # Stop Hunt McGee
-from statistics import mean
+from statistics import mode
 from pandas import DataFrame
 
 def Stop_Hunt_McGee(data:DataFrame, window:int=21) -> DataFrame:
