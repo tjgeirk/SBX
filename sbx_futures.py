@@ -50,7 +50,7 @@ def Data(coin: str, tf: str = tf, source: str = 'mark') -> dataframe:
     return dataframe(d)
 
 
-def Bands(window=20, atrs=2) -> dataframe:
+def Bands(window=20, atrs=1) -> dataframe:
     df = {}
     atr = volatility.average_true_range(
         data['high'], data['low'], data['close'], window)
@@ -76,10 +76,10 @@ def h(): return data['high']
 def l(): return data['low']
 def c(): return data['close']
 def t(): return exchange.fetch_ticker(coin)
-def q(): return (b()/c().iloc[-1])*lever()*0.1
-def bid(): return t()['info']['bestBidPrice']
-def ask(): return t()['info']['bestAskPrice']
+def bid(): return float(t()['info']['bestBidPrice'])
+def ask(): return float(t()['info']['bestAskPrice'])
 def adx(): return AverageDirectionalIndex()['ADX_28'].iloc[-1]
+def q(): return (b()/ask())*lever()*0.05
 
 
 coin = None
@@ -96,18 +96,20 @@ while True:
 
         if lever() > 5:
             print(
-                'oh F*CK! BIG DUMB IDIOT MODE IS CURRENTLY ACTIVATED!!! REDUCE LEVERAGE OR YOU WILL DIED!!!')
+                'WARNING! BIG DUMB IDIOT MODE IS CURRENTLY ACTIVATED!!! REDUCE LEVERAGE OR YOU WILL DIED!!!')
+
         time.sleep(exchange.rateLimit/500)
         if adx() > 20 and q() >= 1:
             if c().iloc[-1] > ma(50).iloc[-1] > ma(200).iloc[-1]:
                 print(f'BUYING {coin}.')
                 exchange.create_market_order(
-                    coin, 'buy', q(), {'leverage': lever})
+                    coin, 'buy', q(), {'leverage': lever()})
             elif c().iloc[-1] < ma(50).iloc[-1] < ma(200).iloc[-1]:
                 print(f'SELLING {coin}.')
                 exchange.create_market_sell_order(
-                    coin, q(), {'leverage': lever})
+                    coin, q(), {'leverage': lever()})
         time.sleep(exchange.rateLimit/500)
+
         if adx() < 20 and q() >= 1:
             if (c().iloc[-1] < lo().iloc[-1]):
                 print(f'BUYING {coin}.')
@@ -118,6 +120,7 @@ while True:
                 exchange.create_limit_sell_order(
                     coin, q(), bid(), {'leverage': lever()})
         time.sleep(exchange.rateLimit/500)
+
         for x in exchange.fetch_positions():
             print(f'Checking {x["symbol"]} position status...')
             time.sleep(exchange.rateLimit/500)
@@ -145,11 +148,11 @@ while True:
                 if c().iloc[-1] > ma(50).iloc[-1] > ma(200).iloc[-1]:
                     print(f'BUYING {x["symbol"]}.')
                     exchange.create_limit_order(
-                        x['symbol'], 'buy', q(), x['markPrice'], {'leverage': lever})
+                        x['symbol'], 'buy', q(), x['markPrice'], {'leverage': lever()})
                 elif c().iloc[-1] < ma(50).iloc[-1] < ma(200).iloc[-1]:
                     print(f'SELLING {x["symbol"]}.')
                     exchange.create_limit_sell_order(
-                        x['symbol'], q(), x['markPrice'], {'leverage': lever})
+                        x['symbol'], q(), x['markPrice'], {'leverage': lever()})
             elif adx() < 20 and q() >= 1:
                 print('ADX Detects a Range...')
                 if (c().iloc[-1] < lo().iloc[-1]):
