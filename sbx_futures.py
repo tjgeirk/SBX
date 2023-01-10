@@ -1,10 +1,10 @@
 import statistics
 import time
 import ccxt
+import pandas_ta as ta
 from matplotlib import pyplot as plt
-from ta import momentum, volatility, trend
 from pandas import DataFrame as dataframe
-import pandas_ta as pta
+
 tf = '5m'
 max_leverage = 5
 picker_override = None
@@ -32,56 +32,51 @@ def picker() -> str:
             return coin
 
 
-def Data(coin: str, tf: str = tf, source: str = 'mark') -> dataframe:
-    d = {}
-    for x in ['date', 'open', 'high', 'low', 'close', 'volume']:
-        d[x] = {}
-    df = dataframe(exchange.fetch_ohlcv(coin, tf, params={'price': source}))
-    d['volume'] = df[5]
-    d['close'] = (df[1] + df[2] + df[3] + df[4]) / 4
-    for i in range(0, len(df)):
-        d['open'][i] = (
-            ((df[1][i] + df[4][i]) / 2)
-            if i == 0
-            else ((df[1][i - 1] + df[4][i - 1]) / 2)
-        )
-        d['high'][i] = max(df[1][i], df[4][i], df[2][i])
-        d['low'][i] = min(df[1][i], df[4][i], df[3][i])
-    return dataframe(d)
+def Data(coin: str, tf: str = tf) -> dataframe:
+    data = {}
+    for i, v in enumerate(['date', 'open', 'high', 'low', 'close', 'volume']):
+        data[v] = {}
+        for n, x in enumerate(exchange.fetch_ohlcv(coin, tf, limit=1000)):
+            data[v][n] = x[i]
+    return dataframe(data)
 
 
-def Bands(window=20, atrs=1) -> dataframe:
-    df = {}
-    atr = volatility.average_true_range(
-        data['high'], data['low'], data['close'], window)
-    df['middle'] = momentum.kama(data['close'], window)
-    df['upper'] = df['middle']+(atrs*atr)
-    df['lower'] = df['middle']-(atrs*atr)
-    return dataframe(df)
+class Order:
+    def __init__(self, coin: str) -> None:
+        self.coin = coin
+        self.b = float(exchange.fetch_balance()['USDT']['free'])
+        self.ml = exchange.load_markets()[coin]['info']['maxLeverage']
+        self.lever = max_leverage if max_leverage < self.ml else self.ml
+        self.t = exchange.fetch_ticker(coin)
+        self.bid = float(self.t['info']['bestBidPrice'])
+        self.ask = float(self.t['info']['bestAskPrice'])
+        self.last = float(self.t['last'])
+        self.q = (self.b/self.last)*self.lever*0.1
 
+    def buy(self) -> None:
+        print('BUY')
+        exchange.create_limit_buy_order(self.coin, self.q, self.ask, {
+                                        'leverage': self.lever})
 
-def AverageDirectionalIndex(window=28): return pta.adx(
-    data['high'], data['low'], data['close'], window)
+    def sell(self) -> None:
+        print('SELL')
+        exchange.create_limit_sell_order(self.coin, self.q, self.bid, {
+                                         'leverage': self.lever})
 
+    def takeProfits(self) -> None:
+        for x in exchange.fetch_positions():
+            if x['percentage'] >= 0.02:
+                try:
+                    exchange.create_stop_limit_order(self.coin, 'sell' if x['side'] == 'long' else 'buy', x['contracts'], x['entryPrice'], x['entryPrice'], {'closeOrder': True, 'stop': 'down' if x['side'] == 'long' else 'up'})
+                except Exception:
+                    continue
+            if ((x['side'] == 'long' and  close < open) or (x['side'] == 'short' and open < close)) and x['percentage'] > 0:
+                try:
+                    exchange.create_limit_order(self.coin, 'sell' if x['side'] == 'long' else 'buy', x['contracts'], x['markPrice'], {'closeOrder': True, 'stop': 'down' if x['side'] == 'long' else 'up'})
+                except Exception:
+                    continue
 
-def b(): return float(exchange.fetch_balance()['USDT']['free'])
-def ma(window: int = 200): return trend.ema_indicator(data['close'], window)
-def ml(): return exchange.load_markets()[coin]['info']['maxLeverage']
-def lever(): return max_leverage if max_leverage < ml() else ml()
-def hi(): return Bands()['upper']
-def md(): return Bands()['middle']
-def lo(): return Bands()['lower']
-def o(): return data['open']
-def h(): return data['high']
-def l(): return data['low']
-def c(): return data['close']
-def t(): return exchange.fetch_ticker(coin)
-def bid(): return float(t()['info']['bestBidPrice'])
-def ask(): return float(t()['info']['bestAskPrice'])
-def adx(): return AverageDirectionalIndex()['ADX_28'].iloc[-1]
-def q(): return (b()/ask())*lever()*0.05
-
-
+last_climate = None
 coin = None
 while True:
     try:
@@ -92,78 +87,43 @@ while True:
                     exchange.cancel_order(x['id'])
             coin = picker()
             print(coin)
+
         data = Data(coin, tf)
 
-        if lever() > 5:
-            print(
-                'WARNING! BIG DUMB IDIOT MODE IS CURRENTLY ACTIVATED!!! REDUCE LEVERAGE OR YOU WILL DIED!!!')
+        def ma(window): return ta.ma(
+            'ema', data['close'], length=window).iloc[-1]
+        k = data.ta.stoch()['STOCHk_14_3_3'].iloc[-1]
+        d = data.ta.stoch()['STOCHd_14_3_3'].iloc[-1]
+        mfi = data.ta.mfi(length=5).iloc[-1]
+        open = data.ta.ha()['HA_open'].iloc[-1]
+        close = data.ta.ha()['HA_close'].iloc[-1]
+        trend = True if ta.increasing(
+            data.ta.adx()['ADX_14']).iloc[-1] == 1 else False
+        range = True if ta.decreasing(
+            data.ta.adx()['ADX_14']).iloc[-1] == 1 else False
 
-        time.sleep(exchange.rateLimit/500)
-        if adx() > 20 and q() >= 1:
-            if c().iloc[-1] > ma(50).iloc[-1] > ma(200).iloc[-1]:
-                print(f'BUYING {coin}.')
-                exchange.create_market_order(
-                    coin, 'buy', q(), {'leverage': lever()})
-            elif c().iloc[-1] < ma(50).iloc[-1] < ma(200).iloc[-1]:
-                print(f'SELLING {coin}.')
-                exchange.create_market_sell_order(
-                    coin, q(), {'leverage': lever()})
-        time.sleep(exchange.rateLimit/500)
+        climate = 'Trend' if trend == True else 'Range' if range == True else 'Unsure'
 
-        if adx() < 20 and q() >= 1:
-            if (c().iloc[-1] < lo().iloc[-1]):
-                print(f'BUYING {coin}.')
-                exchange.create_limit_buy_order(
-                    coin, q(), ask(), {'leverage': lever()})
-            elif (c().iloc[-1] > hi().iloc[-1]):
-                print(f'SELLING {coin}.')
-                exchange.create_limit_sell_order(
-                    coin, q(), bid(), {'leverage': lever()})
-        time.sleep(exchange.rateLimit/500)
+        if climate != last_climate:
+            print(climate)
+            last_climate = climate
 
-        for x in exchange.fetch_positions():
-            print(f'Checking {x["symbol"]} position status...')
-            time.sleep(exchange.rateLimit/500)
-            if x['percentage'] >= 0.02:
-                print('Placing stop...')
-                try:
-                    exchange.create_stop_limit_order(coin, 'sell' if x['side'] == 'long' else 'buy', x['contracts'], x['entryPrice'], x['entryPrice'], {
-                                                     'closeOrder': True, 'stop': 'down' if x['side'] == 'long' else 'up'})
-                except Exception:
-                    continue
-            time.sleep(exchange.rateLimit/500)
-            if x['side'] == 'long':
-                if x['markPrice'] > hi().iloc[-1] or x['percentage'] <= -0.05:
-                    print(f'CLOSING {x["symbol"]}.')
-                    exchange.create_limit_sell_order(
-                        x['symbol'], x['contracts'], x['markPrice'], {'closeOrder': True})
-            elif x['side'] == 'short':
-                if x['markPrice'] < lo().iloc[-1] or x['percentage'] <= -0.05:
-                    print(f'CLOSING {x["symbol"]}.')
-                    exchange.create_limit_buy_order(
-                        x['symbol'], x['contracts'], x['markPrice'], {'closeOrder': True})
-            time.sleep(exchange.rateLimit/500)
-            if adx() > 20 and q() >= 1:
-                print('ADX Detects a Trend...')
-                if c().iloc[-1] > ma(50).iloc[-1] > ma(200).iloc[-1]:
-                    print(f'BUYING {x["symbol"]}.')
-                    exchange.create_limit_order(
-                        x['symbol'], 'buy', q(), x['markPrice'], {'leverage': lever()})
-                elif c().iloc[-1] < ma(50).iloc[-1] < ma(200).iloc[-1]:
-                    print(f'SELLING {x["symbol"]}.')
-                    exchange.create_limit_sell_order(
-                        x['symbol'], q(), x['markPrice'], {'leverage': lever()})
-            elif adx() < 20 and q() >= 1:
-                print('ADX Detects a Range...')
-                if (c().iloc[-1] < lo().iloc[-1]):
-                    print(f'BUYING {x["symbol"]}.')
-                    exchange.create_limit_buy_order(
-                        x['symbol'], q(), ask(), {'leverage': lever()})
-                elif (c().iloc[-1] > hi().iloc[-1]):
-                    print(f'BUYING {x["symbol"]}.')
-                    exchange.create_limit_sell_order(
-                        x['symbol'], q(), bid(), {'leverage': lever()})
-            time.sleep(exchange.rateLimit/500)
+        if Order(coin).q >= 1:
+
+            if trend is True and mfi > 50 and close > ma(20) > ma(50):
+                Order(coin).buy()
+
+            if trend is True and mfi < 50 and close < ma(20) < ma(50):
+                Order(coin).sell()
+
+            if range is True and 20 > k > d:
+                Order(coin).buy()
+
+            if range is True and 80 < k < d:
+                Order(coin).sell()
+
+        Order(coin).takeProfits()
+
     except Exception as e:
         print(e)
         time.sleep(exchange.rateLimit/500)
