@@ -9,6 +9,7 @@ tf = '5m'
 max_leverage = 5
 picker_override = None
 exclude = []
+include = ['OCEAN/USDT:USDT']
 
 exchange = ccxt.kucoinfutures({
     'apiKey': '',
@@ -16,20 +17,23 @@ exchange = ccxt.kucoinfutures({
     'password': '',
 })
 
+excluded = []
 
 def picker() -> str:
-    markets = exchange.load_markets(True)
+    z = None
     picker = {}
-    for v in markets:
-        if v in exclude:
-            continue
-        else:
-            picker[v] = [markets[v]['info']['priceChgPct']]
-    pick = max(picker.values())
-    for i, v in picker.items():
-        if pick == v:
-            coin = i
-            return coin
+    markets = exchange.load_markets(True)
+    while z is None:
+        for v in markets:
+            if v in (excluded or exclude):
+                continue
+            else:
+                picker[v] = markets[v]['info']['priceChgPct']
+        pick = max(picker.values())
+        for i, v in picker.items():
+            if pick == v:
+                z = i
+    return z
 
 
 def Data(coin: str, tf: str = tf) -> dataframe:
@@ -51,7 +55,7 @@ class Order:
         self.bid = float(self.t['info']['bestBidPrice'])
         self.ask = float(self.t['info']['bestAskPrice'])
         self.last = float(self.t['last'])
-        self.q = (self.b/self.last)*self.lever*0.1
+        self.q = ((self.b)/self.last)
 
     def buy(self) -> None:
         print('BUY')
@@ -67,62 +71,68 @@ class Order:
         for x in exchange.fetch_positions():
             if x['percentage'] >= 0.02:
                 try:
-                    exchange.create_stop_limit_order(self.coin, 'sell' if x['side'] == 'long' else 'buy', x['contracts'], x['entryPrice'], x['entryPrice'], {'closeOrder': True, 'stop': 'down' if x['side'] == 'long' else 'up'})
-                except Exception:
-                    continue
-            if ((x['side'] == 'long' and  close < open) or (x['side'] == 'short' and open < close)) and x['percentage'] > 0:
-                try:
-                    exchange.create_limit_order(self.coin, 'sell' if x['side'] == 'long' else 'buy', x['contracts'], x['markPrice'], {'closeOrder': True, 'stop': 'down' if x['side'] == 'long' else 'up'})
+                    exchange.create_stop_limit_order(self.coin, 'sell' if x['side'] == 'long' else 'buy', x['contracts'], x['entryPrice'], x['entryPrice'], {
+                                                     'closeOrder': True, 'stop': 'down' if x['side'] == 'long' else 'up'})
                 except Exception:
                     continue
 
-last_climate = None
-coin = None
+            if ((x['side'] == 'long' and close < ma(21)) or (x['side'] == 'short' and close > ma(20))):
+                try:
+                    exchange.create_limit_order(self.coin, 'sell' if x['side'] == 'long' else 'buy', x['contracts'], x['markPrice'], {
+                                                'closeOrder': True, 'stop': 'down' if x['side'] == 'long' else 'up'})
+                except Exception:
+                    continue
+
+
 while True:
     try:
-        if coin != picker():
-            unsettled = exchange.fetch_open_orders(coin)
-            for x in unsettled:
-                if x['info']['closeOrder'] != True:
-                    exchange.cancel_order(x['id'])
-            coin = picker()
+        coins = include
+        for x in exchange.fetch_positions():
+            coins.append(x['symbol'])
+        if picker() not in coins:
+            coins.append(picker())
+
+        for x in exchange.fetch_open_orders():
+            if x['symbol'] not in coins:
+                exchange.cancel_order(x['id'])
+
+        for coin in coins:
+            data = Data(coin, tf)
+            order = Order(coin)
             print(coin)
 
-        data = Data(coin, tf)
+            def ma(window): return ta.ma(
+                'ema', data['close'], length=window).iloc[-1]
+            open = data.ta.ha()['HA_open'].iloc[-1]
+            close = data.ta.ha()['HA_close'].iloc[-1]
 
-        def ma(window): return ta.ma(
-            'ema', data['close'], length=window).iloc[-1]
-        k = data.ta.stoch()['STOCHk_14_3_3'].iloc[-1]
-        d = data.ta.stoch()['STOCHd_14_3_3'].iloc[-1]
-        mfi = data.ta.mfi(length=5).iloc[-1]
-        open = data.ta.ha()['HA_open'].iloc[-1]
-        close = data.ta.ha()['HA_close'].iloc[-1]
-        trend = True if ta.increasing(
-            data.ta.adx()['ADX_14']).iloc[-1] == 1 else False
-        range = True if ta.decreasing(
-            data.ta.adx()['ADX_14']).iloc[-1] == 1 else False
+            if order.q >= 1:
 
-        climate = 'Trend' if trend == True else 'Range' if range == True else 'Unsure'
+                if ta.decreasing(data.ta.adx(length=50)['ADX_50']).iloc[-1] == 1:
+                    print(f'Dropping {coin} from trade pairs list.')
+                    excluded.append(coin)
+                    if len(excluded) >= 20:
+                        for x in excluded:
+                            if ta.increasing(Data(x, tf).ta.adx(length=50)['ADX_50']).iloc[-1] == 1:
+                                excluded.remove(x)
 
-        if climate != last_climate:
-            print(climate)
-            last_climate = climate
+                elif ta.increasing(
+                        data.ta.adx(length=50)['ADX_50']).iloc[-1] == 1:
+                    if ma(20) > ma(50) > ma(200) and open < close:
+                        order.buy()
+                    elif ma(20) < ma(50) < ma(200) and open > close:
+                        order.sell()
+            order.takeProfits()
 
-        if Order(coin).q >= 1:
-
-            if trend is True and mfi > 50 and close > ma(20) > ma(50):
-                Order(coin).buy()
-
-            if trend is True and mfi < 50 and close < ma(20) < ma(50):
-                Order(coin).sell()
-
-            if range is True and 20 > k > d:
-                Order(coin).buy()
-
-            if range is True and 80 < k < d:
-                Order(coin).sell()
-
-        Order(coin).takeProfits()
+            open_orders = sorted(
+                exchange.fetch_open_orders(coin), key=lambda x: x['timestamp'], reverse=True)
+            sorted(open_orders, key=lambda x: x['info']['closeOrder'] == False)
+            for i, x in enumerate(open_orders):
+                if i == 0:
+                    continue
+                else:
+                    print('Cancelling order', x['id'])
+                    exchange.cancel_order(x['id'])
 
     except Exception as e:
         print(e)
