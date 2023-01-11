@@ -9,7 +9,7 @@ tf = '5m'
 max_leverage = 5
 picker_override = None
 exclude = []
-include = ['OCEAN/USDT:USDT']
+include = []
 
 exchange = ccxt.kucoinfutures({
     'apiKey': '',
@@ -17,15 +17,14 @@ exchange = ccxt.kucoinfutures({
     'password': '',
 })
 
-excluded = []
-
+no_signal = []
 def picker() -> str:
     z = None
     picker = {}
     markets = exchange.load_markets(True)
     while z is None:
         for v in markets:
-            if v in (excluded or exclude):
+            if v in (no_signal or exclude):
                 continue
             else:
                 picker[v] = markets[v]['info']['priceChgPct']
@@ -96,7 +95,7 @@ while True:
             if x['symbol'] not in coins:
                 exchange.cancel_order(x['id'])
 
-        for coin in coins:
+        for coin in set(coins):
             data = Data(coin, tf)
             order = Order(coin)
             print(coin)
@@ -108,16 +107,16 @@ while True:
 
             if order.q >= 1:
 
-                if ta.decreasing(data.ta.adx(length=50)['ADX_50']).iloc[-1] == 1:
+                if ta.decreasing(data.ta.adx(length=200)['ADX_200']).iloc[-1] == 1:
                     print(f'Dropping {coin} from trade pairs list.')
-                    excluded.append(coin)
-                    if len(excluded) >= 20:
-                        for x in excluded:
+                    no_signal.append(coin)
+                    if len(no_signal) >= 20:
+                        for x in no_signal:
                             if ta.increasing(Data(x, tf).ta.adx(length=50)['ADX_50']).iloc[-1] == 1:
-                                excluded.remove(x)
+                                no_signal.remove(x)
 
                 elif ta.increasing(
-                        data.ta.adx(length=50)['ADX_50']).iloc[-1] == 1:
+                        data.ta.adx(length=200)['ADX_200']).iloc[-1] == 1:
                     if ma(20) > ma(50) > ma(200) and open < close:
                         order.buy()
                     elif ma(20) < ma(50) < ma(200) and open > close:
