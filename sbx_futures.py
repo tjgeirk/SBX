@@ -55,11 +55,12 @@ class Order:
 SBX = ta.Strategy(name='SBX', ta=[
     {'kind': 'mfi', 'length': 5},
     {'kind': 'adx', 'length': 5},
-    {'kind': 'ema', 'close': 'close', 'length': 8},
-    {'kind': 'ema', 'close': 'close', 'length': 13},
     {'kind': 'ema', 'close': 'close', 'length': 21},
-    {'kind': 'donchian', 'upper_length': 20, 'lower_length': 20},
-])
+    {'kind': 'ema', 'close': 'close', 'length': 13},
+    {'kind': 'ema', 'close': 'close', 'length': 8},
+    {'kind': 'ema', 'close': 'close', 'length': 5},
+    {'kind': 'ema', 'close': 'close', 'length': 3},
+    {'kind': 'ema', 'close': 'close', 'length': 2}])
 
 
 while True:
@@ -70,24 +71,27 @@ while True:
     coins = picker[0:5] + open_positions
     try:
         for coin in coins:
-            print(coin)
             df = Data(coin, tf)
             df.ta.strategy(SBX)
             order = Order(coin)
 
             if order.q >= 1:
 
-                if (ta.increasing(df['ADX_5'], 20).iloc[-1] == 1 and
-                    df['DCU_20_20'].iloc[-1] > df['DCU_20_20'].iloc[-2] and
+                if (ta.increasing(df['ADX_5'], 21).iloc[-1] == 1 and
+                    ta.increasing(df['DMP_5'], 21).iloc[-1] == 1 and
                     df['MFI_5'].iloc[-1] > 50 and
-                    df['EMA_8'].iloc[-1] > df['EMA_13'].iloc[-1] > df['EMA_21'].iloc[-1]
+                    df['EMA_8'].iloc[-1] > 
+                    df['EMA_13'].iloc[-1] > 
+                    df['EMA_21'].iloc[-1]
                     ):
                     order.buy()
 
-                if (ta.increasing(df['ADX_5'], 20).iloc[-1] == 1 and
-                    df['DCL_20_20'].iloc[-1] < df['DCL_20_20'].iloc[-2] and
+                if (ta.increasing(df['ADX_5'], 21).iloc[-1] == 1 and
+                    ta.increasing(df['DMN_5'], 21).iloc[-1] == 1 and
                     df['MFI_5'].iloc[-1] < 50 and
-                    df['EMA_8'].iloc[-1] < df['EMA_13'].iloc[-1] < df['EMA_21'].iloc[-1]
+                    df['EMA_8'].iloc[-1] < 
+                    df['EMA_13'].iloc[-1] < 
+                    df['EMA_21'].iloc[-1]
                     ):
                     order.sell()
 
@@ -97,20 +101,18 @@ while True:
             df.ta.strategy(SBX)
 
             if (x['side'] == 'long' and 
-                ta.decreasing(df['DMP_5'], 20).iloc[-1] == 1 and ta.decreasing(df['MFI_5'], 20).iloc[-1] == 1):
-                if x['percentage'] > 0:
-                    order.sell(x['markPrice'])
-                else:
-                    order.sell()
+                df['EMA_2'].iloc[-1] < 
+                df['EMA_3'].iloc[-1] <
+                df['EMA_5'].iloc[-1]):
+                order.sell(x['markPrice'])
 
-            if (x['side'] == 'short' and 
-                ta.decreasing(df['DMN_5'], 20).iloc[-1] == 1 and ta.increasing(df['MFI_5'], 20).iloc[-1] == 1):
-                if x['percentage'] > 0:
-                    order.buy(x['markPrice'])
-                else:
-                    order.buy()
+            elif (x['side'] == 'short' and
+                df['EMA_2'].iloc[-1] >
+                df['EMA_3'].iloc[-1] >
+                df['EMA_5'].iloc[-1]):
+                order.buy(x['markPrice'])
 
-            if (x['percentage'] >= 0.05 or x['percentage'] <= -0.1):
+            elif (x['percentage'] >= 0.02 or x['percentage'] <= -0.1):
                 (lambda: exchange.create_stop_limit_order(x['symbol'], 'sell' if x['side'] == 'long' else 'buy', x['contracts'], x['markPrice'], x['markPrice'], {
                  'closeOrder': True, 'stop': 'down' if x['side'] == 'long' else 'up',  'reduceOnly': True}))()
 
