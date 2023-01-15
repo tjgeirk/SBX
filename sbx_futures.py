@@ -1,17 +1,12 @@
-import statistics
-import time
-import ccxt
+from time import sleep
+from ccxt import kucoinfutures
 import pandas_ta as ta
-from matplotlib import pyplot as plt
-from pandas import DataFrame as dataframe, Series as series
+from pandas import DataFrame as dataframe
 
 tf = '5m'
 max_leverage = 5
 
-exclude = []
-include = []
-
-exchange = ccxt.kucoinfutures({
+exchange = kucoinfutures({
     'apiKey': '',
     'secret': '',
     'password': '',
@@ -78,21 +73,21 @@ while True:
             if order.q >= 1:
 
                 if (ta.increasing(df['ADX_5'], 21).iloc[-1] == 1 and
-                    ta.increasing(df['DMP_5'], 21).iloc[-1] == 1 and
-                    df['MFI_5'].iloc[-1] > 50 and
-                    df['EMA_8'].iloc[-1] > 
-                    df['EMA_13'].iloc[-1] > 
-                    df['EMA_21'].iloc[-1]
-                    ):
+                        ta.increasing(df['DMP_5'], 21).iloc[-1] == 1 and
+                        df['MFI_5'].iloc[-1] > 50 and
+                        df['EMA_8'].iloc[-1] >
+                        df['EMA_13'].iloc[-1] >
+                        df['EMA_21'].iloc[-1]
+                        ):
                     order.buy()
 
                 if (ta.increasing(df['ADX_5'], 21).iloc[-1] == 1 and
-                    ta.increasing(df['DMN_5'], 21).iloc[-1] == 1 and
-                    df['MFI_5'].iloc[-1] < 50 and
-                    df['EMA_8'].iloc[-1] < 
-                    df['EMA_13'].iloc[-1] < 
-                    df['EMA_21'].iloc[-1]
-                    ):
+                        ta.increasing(df['DMN_5'], 21).iloc[-1] == 1 and
+                        df['MFI_5'].iloc[-1] < 50 and
+                        df['EMA_8'].iloc[-1] <
+                        df['EMA_13'].iloc[-1] <
+                        df['EMA_21'].iloc[-1]
+                        ):
                     order.sell()
 
         for x in exchange.fetch_positions():
@@ -100,16 +95,16 @@ while True:
             df = Data(x['symbol'], tf)
             df.ta.strategy(SBX)
 
-            if (x['side'] == 'long' and 
-                df['EMA_2'].iloc[-1] < 
+            if (x['side'] == 'long' and
+                df['EMA_2'].iloc[-1] <
                 df['EMA_3'].iloc[-1] <
-                df['EMA_5'].iloc[-1]):
+                    df['EMA_5'].iloc[-1]):
                 order.sell(x['markPrice'])
 
             elif (x['side'] == 'short' and
-                df['EMA_2'].iloc[-1] >
-                df['EMA_3'].iloc[-1] >
-                df['EMA_5'].iloc[-1]):
+                  df['EMA_2'].iloc[-1] >
+                  df['EMA_3'].iloc[-1] >
+                  df['EMA_5'].iloc[-1]):
                 order.buy(x['markPrice'])
 
             elif (x['percentage'] >= 0.02 or x['percentage'] <= -0.1):
@@ -126,5 +121,5 @@ while True:
 
     except Exception as e:
         print(e)
-        time.sleep(exchange.rateLimit/1000)
+        sleep(exchange.rateLimit/1000)
         continue
