@@ -1,15 +1,17 @@
+import pandas_ta as ta
 from time import sleep
 from ccxt import kucoinfutures
-import pandas_ta as ta
 from pandas import DataFrame as dataframe
+from statistics import mean, median, mode
 
 tf = '5m'
-max_leverage = 5
+max_leverage = 10
 
 exchange = kucoinfutures({
     'apiKey': '',
     'secret': '',
     'password': '',
+    'adjustForTimeDifference': True,
 })
 
 
@@ -32,7 +34,9 @@ class Order:
         self.bid = float(self.t['info']['bestBidPrice'])
         self.ask = float(self.t['info']['bestAskPrice'])
         self.last = float(self.t['last'])
-        self.q = (self.b*self.lever/self.last)/2
+        self.q = float(self.b/self.last)*0.25
+        if self.q < 1:
+            self.q = 1
 
     def sell(self, price=None) -> None:
         print('sell')
@@ -57,40 +61,44 @@ SBX = ta.Strategy(name='SBX', ta=[
     {'kind': 'ema', 'close': 'close', 'length': 3},
     {'kind': 'ema', 'close': 'close', 'length': 2}])
 
-
 while True:
     markets = exchange.load_markets()
     picker = {x: [markets[x]['info']['priceChgPct']] for x in markets}
     picker = sorted(picker, key=lambda y: picker[y], reverse=True)
     open_positions = [x['symbol'] for x in exchange.fetch_positions()]
     coins = picker[0:5] + open_positions
-    try:
-        for coin in coins:
+    for coin in coins:
+        try:
+            print(coin)
             df = Data(coin, tf)
             df.ta.strategy(SBX)
             order = Order(coin)
 
-            if order.q >= 1:
+            if (ta.increasing(df['ADX_5'], 21).iloc[-1] == 1 and
+                ta.increasing(df['DMP_5'], 21).iloc[-1] == 1 and
+                df['MFI_5'].iloc[-1] > 50 and
+                df['EMA_8'].iloc[-1] >
+                df['EMA_13'].iloc[-1] >
+                df['EMA_21'].iloc[-1]
+                ):
+                order.buy()
 
-                if (ta.increasing(df['ADX_5'], 21).iloc[-1] == 1 and
-                        ta.increasing(df['DMP_5'], 21).iloc[-1] == 1 and
-                        df['MFI_5'].iloc[-1] > 50 and
-                        df['EMA_8'].iloc[-1] >
-                        df['EMA_13'].iloc[-1] >
-                        df['EMA_21'].iloc[-1]
-                        ):
-                    order.buy()
+            if (ta.increasing(df['ADX_5'], 21).iloc[-1] == 1 and
+                ta.increasing(df['DMN_5'], 21).iloc[-1] == 1 and
+                df['MFI_5'].iloc[-1] < 50 and
+                df['EMA_8'].iloc[-1] <
+                df['EMA_13'].iloc[-1] <
+                df['EMA_21'].iloc[-1]
+                ):
+                order.sell()
 
-                if (ta.increasing(df['ADX_5'], 21).iloc[-1] == 1 and
-                        ta.increasing(df['DMN_5'], 21).iloc[-1] == 1 and
-                        df['MFI_5'].iloc[-1] < 50 and
-                        df['EMA_8'].iloc[-1] <
-                        df['EMA_13'].iloc[-1] <
-                        df['EMA_21'].iloc[-1]
-                        ):
-                    order.sell()
+        except Exception as e:
+            print(e)
+            sleep(exchange.rateLimit/1000)
+            continue
 
-        for x in exchange.fetch_positions():
+    for x in exchange.fetch_positions():
+        try:
             order = Order(x['symbol'])
             df = Data(x['symbol'], tf)
             df.ta.strategy(SBX)
@@ -101,25 +109,31 @@ while True:
                     df['EMA_5'].iloc[-1]):
                 order.sell(x['markPrice'])
 
-            elif (x['side'] == 'short' and
-                  df['EMA_2'].iloc[-1] >
-                  df['EMA_3'].iloc[-1] >
-                  df['EMA_5'].iloc[-1]):
+            if (x['side'] == 'short' and
+                df['EMA_2'].iloc[-1] >
+                df['EMA_3'].iloc[-1] >
+                    df['EMA_5'].iloc[-1]):
                 order.buy(x['markPrice'])
 
-            elif (x['percentage'] >= 0.02 or x['percentage'] <= -0.1):
+            if (x['percentage'] >= 0.01 or x['percentage'] <= -0.05):
                 (lambda: exchange.create_stop_limit_order(x['symbol'], 'sell' if x['side'] == 'long' else 'buy', x['contracts'], x['markPrice'], x['markPrice'], {
                  'closeOrder': True, 'stop': 'down' if x['side'] == 'long' else 'up',  'reduceOnly': True}))()
 
-        open_orders = sorted(exchange.fetch_open_orders(),
-                             key=lambda x: x['timestamp'], reverse=True)
-        for i, x in enumerate(open_orders):
+        except Exception as e:
+            print(e)
+            sleep(exchange.rateLimit/1000)
+            continue
+
+    open_orders = sorted(exchange.fetch_open_orders(),
+                         key=lambda x: x['timestamp'], reverse=True)
+
+    for i, x in enumerate(open_orders):
+        try:
             if i in range(0, 6) or x['info']['closeOrder'] == True:
                 continue
             else:
                 exchange.cancel_order(x['id'])
-
-    except Exception as e:
-        print(e)
-        sleep(exchange.rateLimit/1000)
-        continue
+        except Exception as e:
+            print(e)
+            sleep(exchange.rateLimit/1000)
+            continue
