@@ -4,7 +4,7 @@ from ccxt import kucoinfutures
 from pandas import DataFrame as dataframe
 
 tf = '5m'
-max_leverage = 5
+max_leverage = 10
 
 exchange = kucoinfutures({
     'apiKey': '',
@@ -51,6 +51,7 @@ class Order:
 
 
 SBX = ta.Strategy(name='SBX', ta=[
+    {'kind': 'ha'},
     {'kind': 'mfi', 'length': 5},
     {'kind': 'adx', 'length': 5},
     {'kind': 'ema', 'close': 'close', 'length': 21},
@@ -65,7 +66,7 @@ while True:
     picker = {x: [markets[x]['info']['priceChgPct']] for x in markets}
     picker = sorted(picker, key=lambda y: picker[y], reverse=True)
     open_positions = [x['symbol'] for x in exchange.fetch_positions()]
-    coins = picker[0:5] + open_positions
+    coins = picker[0:3] + open_positions
     for coin in coins:
         try:
             print(coin)
@@ -73,23 +74,24 @@ while True:
             df.ta.strategy(SBX)
             order = Order(coin)
 
-            if coin not in [x['symbol'] for x in exchange.fetch_positions()]:
-
+            if (x[coin]['contracts']*x[coin]['markPrice'] >= (lambda: exchange.fetch_total_balance()['USDT'])()/10 for x in exchange.fetch_positions()) == True:
+                pass
+            else:
                 if (df['ADX_5'].iloc[-1] >= 20 and
                     ta.increasing(df['DMP_5'], 21).iloc[-1] == 1 and
                     df['MFI_5'].iloc[-1] > 50 and
+                    df['EMA_5'].iloc[-1] >
                     df['EMA_8'].iloc[-1] >
-                    df['EMA_13'].iloc[-1] >
-                    df['EMA_21'].iloc[-1]
+                    df['EMA_13'].iloc[-1]
                     ):
                     order.buy()
 
                 if (df['ADX_5'].iloc[-1] >= 20 and
                     ta.increasing(df['DMN_5'], 21).iloc[-1] == 1 and
                     df['MFI_5'].iloc[-1] < 50 and
+                    df['EMA_5'].iloc[-1] <
                     df['EMA_8'].iloc[-1] <
-                    df['EMA_13'].iloc[-1] <
-                    df['EMA_21'].iloc[-1]
+                    df['EMA_13'].iloc[-1]
                     ):
                     order.sell()
 
@@ -99,15 +101,7 @@ while True:
                     df = Data(x['symbol'], tf)
                     df.ta.strategy(SBX)
 
-                    total_account_size = (
-                        lambda: exchange.fetch_total_balance()['USDT'])()
-                    maximum_position_size = total_account_size/10
-
-                    if x['contracts']*x['markPrice'] >= maximum_position_size:
-                        order.sell(x['entryPrice']) if x['side'] == 'long' else order.buy(
-                            x['entryPrice'])
-
-                    if (x['percentage'] >= 0.01):
+                    if (x['percentage'] >= 0.05 or x['percentage'] <= -0.1):
                         (lambda: exchange.create_stop_limit_order(x['symbol'], 'sell' if x['side'] == 'long' else 'buy', x['contracts'], x['markPrice'], x['markPrice'], {
                             'closeOrder': True, 'stop': 'down' if x['side'] == 'long' else 'up',  'reduceOnly': True}))()
 
