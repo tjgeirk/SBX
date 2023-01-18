@@ -36,18 +36,22 @@ class Order:
         self.q = float(self.b/self.last)*0.25
         if self.q < 1:
             self.q = 1
-
+            
     def sell(self, price=None) -> None:
         print('sell')
         target = self.last if price == None else price
-        exchange.create_limit_sell_order(
-            self.coin, self.q, target, {'leverage': self.lever})
+        (lambda: exchange.create_limit_sell_order(
+            self.coin, self.q, target, {'leverage': self.lever}))()
+        (lambda: exchange.create_stop_limit_order(
+            self.coin, 'buy', self.q, (target+(target*0.1/self.lever)), (target+(target*0.1/self.lever)), {'closeOrder': True}))()
 
     def buy(self, price=None) -> None:
         print('buy')
         target = self.last if price == None else price
-        exchange.create_limit_buy_order(
-            self.coin, self.q, target, {'leverage': self.lever})
+        (lambda: exchange.create_limit_buy_order(
+            self.coin, self.q, target, {'leverage': self.lever}))()
+        (lambda: exchange.create_stop_limit_order(
+            self.coin, 'sell', self.q, (target-(target*0.1/self.lever)), (target-(target*0.1/self.lever)), {'closeOrder': True}))()
 
 
 SBX = ta.Strategy(name='SBX', ta=[
