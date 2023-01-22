@@ -1,0 +1,6 @@
+vwacd = ta.vwma(df['close'], df['volume'], 12) - ta.vwma(df['close'], df['volume'], 26)
+signal = ta.ema(vwacd, 9)
+
+df['VWACD'] = vwacd
+df['VWACD_SIGNAL'] = signal
+df['VWACD_HIST'] = vwacd - signal
