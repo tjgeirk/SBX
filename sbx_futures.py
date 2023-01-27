@@ -12,7 +12,6 @@ exchange = kucoinfutures({
     'password': '',
 })
 
-
 def Data(coin: str, tf: str = tf) -> dataframe:
     data = {}
     for i, v in enumerate(['date', 'open', 'high', 'low', 'close', 'volume']):
@@ -33,7 +32,7 @@ class Order:
         self.q = 1 if self.q < 1 else self.q
 
     def sell(self, price=None, side=None) -> None:
-        print('sell')
+        print('sell', self.coin)
         target = self.last if price == None else price
         (lambda: exchange.create_limit_sell_order(
             self.coin, self.q, target, {'leverage': self.lever, 'closeOrder': True if side == 'long' else False}))()
@@ -41,7 +40,7 @@ class Order:
             self.coin, 'buy', self.q, (target-(target*0.1/self.lever)), (target-(target*0.1/self.lever)), {'closeOrder': True}))()
 
     def buy(self, price=None, side=None) -> None:
-        print('buy')
+        print('buy', self.coin)
         target = self.last if price == None else price
         (lambda: exchange.create_limit_buy_order(
             self.coin, self.q, target, {'leverage': self.lever, 'closeOrder': True if side == 'short' else False}))()
@@ -60,28 +59,38 @@ SBX = ta.Strategy(name='SBX', ta=[
 ])
 
 while True:
+    
     sleep(exchange.rateLimit/1000)
+
     try:
         markets = exchange.load_markets()
         picker = {x: [markets[x]['info']['priceChgPct']] for x in markets}
         picker = sorted(picker, key=lambda y: picker[y], reverse=True)
         positions = [x['symbol'] for x in exchange.fetch_positions()]
         coins = picker[0:5] + positions
+    
         if exchange.fetch_balance()['USDT']['free'] >= exchange.fetch_balance()['USDT']['total']/5:
             for coin in coins:
+
                 sleep(exchange.rateLimit/1000)
                 df = Data(coin, tf)
                 order = Order(coin)
                 df.ta.strategy(SBX)
                 orders = exchange.fetch_open_orders(
                     coin, params={'stop': True})
+                
                 if len(orders) >= 3*len(positions):
-                    tif = max([x['timestamp'] for x in orders])
-                    for x in orders:
-                        if x['timestamp'] < tif:
-                            exchange.cancel_order(x['id'])
-                            sleep(exchange.rateLimit/1000)
-
+                    try:
+                        tif = max([x['timestamp'] for x in orders])
+                
+                        for x in orders:
+                            if x['timestamp'] < tif:
+                                exchange.cancel_order(x['id'])
+                                sleep(exchange.rateLimit/1000)
+                
+                    except Exception:
+                        pass
+                
                 if df['EMA_8'].iloc[-1] > df['EMA_13'].iloc[-1] > df['EMA_21'].iloc[-1] > df['VWMA_200'].iloc[-1]:
 
                     if (
@@ -107,25 +116,27 @@ while True:
             coin = x['symbol']
             order = Order(coin)
 
-            if x['side'] == 'long' and x['percentage'] <= -0.01:
-                order.buy(x['markPrice'], x['side'])
-
-            if x['side'] == 'short' and x['percentage'] <= -0.01:
-                order.sell(x['markPrice'], x['side'])
-
-            if x['percentage'] <= -0.1 and x['side'] == 'long':
-                order.sell(x['markPrice'], x['side'])
-
-            if x['percentage'] <= -0.1 and x['side'] == 'short':
-                order.buy(x['markPrice'], x['side'])
-
-            if x['percentage'] >= 0.01 and x['side'] == 'long':
-                order.sell(x['markPrice'], x['side'])
-
-            if x['percentage'] >= 0.01 and x['side'] == 'short':
-                order.buy(x['markPrice'], x['side'])
+            if x['side'] == 'long':
+                if x['percentage'] <= -0.01:
+                    try:
+                        order.buy(x['markPrice'])
+                    except Exception:
+                        if x['percentage'] <= -0.2:
+                            order.sell(x['markPrice'], x['side'])
+                elif x['percentage'] >= 0.05:
+                    order.sell(x['markPrice'], x['side'])
+            elif x['side'] == 'short':
+                if x['percentage'] <= -0.01:
+                    try:
+                        order.sell(x['markPrice'])
+                    except Exception:
+                        if x['percentage'] <= -0.2:
+                            order.buy(x['markPrice'], x['side'])
+                elif x['percentage'] >= 0.05:
+                    order.buy(x['markPrice'], x['side'])
 
             age = x['info']['currentTimestamp'] - x['info']['openingTimestamp']
+
             if age > 300_000:
                 order.sell(x['markPrice'], x['side']) if x['side'] == 'long' else order.buy(
                     x['markPrice'], x['side'])
