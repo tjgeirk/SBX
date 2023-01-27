@@ -1,4 +1,5 @@
-
+## SBX Version 2.1.1
+#
 from pandas import DataFrame as dataframe
 from ccxt import kucoinfutures
 from time import sleep
