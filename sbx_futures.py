@@ -5,6 +5,9 @@ from pandas import DataFrame as dataframe
 
 tf = '5m'
 max_leverage = 5
+take_profit = 0.01
+stop_loss = 0.2
+martingale = 0.01
 
 exchange = kucoinfutures({
     'apiKey': '',
@@ -117,22 +120,22 @@ while True:
             order = Order(coin)
 
             if x['side'] == 'long':
-                if x['percentage'] <= -0.01:
+                if x['percentage'] <= -abs(martingale):
                     try:
                         order.buy(x['markPrice'])
                     except Exception:
-                        if x['percentage'] <= -0.2:
+                        if x['percentage'] <= -abs(stop_loss):
                             order.sell(x['markPrice'], x['side'])
-                elif x['percentage'] >= 0.05:
+                elif x['percentage'] >= abs(take_profit):
                     order.sell(x['markPrice'], x['side'])
             elif x['side'] == 'short':
-                if x['percentage'] <= -0.01:
+                if x['percentage'] <= -abs(martingale):
                     try:
                         order.sell(x['markPrice'])
                     except Exception:
-                        if x['percentage'] <= -0.2:
+                        if x['percentage'] <= -abs(stop_loss):
                             order.buy(x['markPrice'], x['side'])
-                elif x['percentage'] >= 0.05:
+                elif x['percentage'] >= abs(take_profit):
                     order.buy(x['markPrice'], x['side'])
 
             age = x['info']['currentTimestamp'] - x['info']['openingTimestamp']
