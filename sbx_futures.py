@@ -112,21 +112,22 @@ while True:
 
             if x['side'] == 'long':
                 if x['percentage'] <= -abs(martingale):
-                        order.buy(x['markPrice'], x['side'], x['contracts'])
+                    order.buy(x['markPrice'], x['side'], x['contracts'])
                 if x['percentage'] <= -abs(stop_loss):
-                        order.sell(x['markPrice'], x['side'], x['contracts'])
+                    order.sell(x['markPrice'], x['side'], x['contracts'])
                 if x['percentage'] >= abs(take_profit):
                     order.sell(x['markPrice'], x['side'], x['contracts'])
             elif x['side'] == 'short':
                 if x['percentage'] <= -abs(martingale):
                     order.sell(x['markPrice'], x['side'], x['contracts'])
                 if x['percentage'] <= -abs(stop_loss):
-                        order.buy(x['markPrice'], x['side'], x['contracts'])
+                    order.buy(x['markPrice'], x['side'], x['contracts'])
                 if x['percentage'] >= abs(take_profit):
                     order.buy(x['markPrice'], x['side'], x['contracts'])
 
     except Exception as e:
         print(e)
+        sleep(exchange.rateLimit/1000)
         queue = {x['symbol'] for x in exchange.fetch_open_orders()}
         for y in [x for x in queue if x not in coins]:
             queue.remove(y)
@@ -137,6 +138,9 @@ while True:
                 if a in range(0, 6):
                     continue
                 else:
-                    exchange.cancel_order(b['id'])
-        sleep(exchange.rateLimit/1000)
+                    try:
+                        exchange.cancel_order(b['id'])
+                    except Exception as e:
+                        print(e)
+                        continue
         continue
