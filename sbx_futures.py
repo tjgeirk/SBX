@@ -32,19 +32,19 @@ class Order:
         self.q = float(self.balance/self.last)*0.01
         self.q = 1 if self.q < 1 else self.q
 
-    def sell(self, price=None) -> None:
+    def sell(self, price=None, side=None) -> None:
         print('sell')
         target = self.last if price == None else price
         (lambda: exchange.create_limit_sell_order(
-            self.coin, self.q, target, {'leverage': self.lever}))()
+            self.coin, self.q, target, {'leverage': self.lever, 'closeOrder': True if side == 'long' else False}))()
         (lambda: exchange.create_stop_limit_order(
             self.coin, 'buy', self.q, (target-(target*0.1/self.lever)), (target-(target*0.1/self.lever)), {'closeOrder': True}))()
 
-    def buy(self, price=None) -> None:
+    def buy(self, price=None, side=None) -> None:
         print('buy')
         target = self.last if price == None else price
         (lambda: exchange.create_limit_buy_order(
-            self.coin, self.q, target, {'leverage': self.lever}))()
+            self.coin, self.q, target, {'leverage': self.lever, 'closeOrder': True if side == 'short' else False}))()
         (lambda: exchange.create_stop_limit_order(
             self.coin, 'sell', self.q, (target+(target*0.1/self.lever)), (target+(target*0.1/self.lever)), {'closeOrder': True}))()
 
@@ -67,18 +67,20 @@ while True:
         picker = sorted(picker, key=lambda y: picker[y], reverse=True)
         positions = [x['symbol'] for x in exchange.fetch_positions()]
         coins = picker[0:5] + positions
-        if exchange.fetch_balance()['USDT']['free'] >= exchange.fetch_balance()['USDT']['used']:
+        if exchange.fetch_balance()['USDT']['free'] >= exchange.fetch_balance()['USDT']['total']/5:
             for coin in coins:
+                sleep(exchange.rateLimit/1000)
                 df = Data(coin, tf)
                 order = Order(coin)
                 df.ta.strategy(SBX)
                 orders = exchange.fetch_open_orders(
                     coin, params={'stop': True})
-                if len(orders) >= 3:
+                if len(orders) >= 3*len(positions):
                     tif = max([x['timestamp'] for x in orders])
                     for x in orders:
                         if x['timestamp'] < tif:
                             exchange.cancel_order(x['id'])
+                            sleep(exchange.rateLimit/1000)
 
                 if df['EMA_8'].iloc[-1] > df['EMA_13'].iloc[-1] > df['EMA_21'].iloc[-1] > df['VWMA_200'].iloc[-1]:
 
@@ -106,27 +108,27 @@ while True:
             order = Order(coin)
 
             if x['side'] == 'long' and x['percentage'] <= -0.01:
-                order.buy(x['markPrice'])
+                order.buy(x['markPrice'], x['side'])
 
             if x['side'] == 'short' and x['percentage'] <= -0.01:
-                order.sell(x['markPrice'])
+                order.sell(x['markPrice'], x['side'])
 
-            if x['percentage'] <= -0.05 and x['side'] == 'long':
-                order.buy(x['markPrice'])
+            if x['percentage'] <= -0.1 and x['side'] == 'long':
+                order.sell(x['markPrice'], x['side'])
 
-            if x['percentage'] <= -0.05 and x['side'] == 'short':
-                order.sell(x['markPrice'])
+            if x['percentage'] <= -0.1 and x['side'] == 'short':
+                order.buy(x['markPrice'], x['side'])
 
             if x['percentage'] >= 0.01 and x['side'] == 'long':
-                order.sell(x['markPrice'])
+                order.sell(x['markPrice'], x['side'])
 
             if x['percentage'] >= 0.01 and x['side'] == 'short':
-                order.buy(x['markPrice'])
+                order.buy(x['markPrice'], x['side'])
 
             age = x['info']['currentTimestamp'] - x['info']['openingTimestamp']
             if age > 300_000:
-                order.sell(x['markPrice']) if x['side'] == 'long' else order.buy(
-                    x['markPrice'])
+                order.sell(x['markPrice'], x['side']) if x['side'] == 'long' else order.buy(
+                    x['markPrice'], x['side'])
 
     except Exception as e:
         print(e)
