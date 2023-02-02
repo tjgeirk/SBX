@@ -8,7 +8,8 @@ tf = '5m'
 max_leverage = 5
 take_profit = 0.01
 stop_loss = 0.2
-martingale = 0.01
+martingale_pcnt = 0.01
+max_new_positions = 3
 
 exchange = kucoinfutures({
     'apiKey': '',
@@ -36,23 +37,43 @@ class Order:
         self.q = float(self.balance/self.last)*0.01
         self.q = 1 if self.q < 1 else self.q
 
-    def sell(self, price=None, side=None, qty=None) -> None:
+    def sell(self, price: float = None, side: str = None, qty: int = None) -> None:
         print('sell', self.coin)
         q = self.q if qty == None else qty
-        target = self.last if price == None else price
-        (lambda: exchange.create_limit_sell_order(
-            self.coin, q, target, {'leverage': self.lever, 'closeOrder': True if side == 'long' else False}))()
-        (lambda: exchange.create_stop_limit_order(
-            self.coin, 'buy', self.q, (target-(target*0.1/self.lever)), (target-(target*0.1/self.lever)), {'closeOrder': True}))()
 
-    def buy(self, price=None, side=None, qty=None) -> None:
+        entry_limit = self.last if price == None else price
+        exit_limit = (entry_limit-(entry_limit*0.1/self.lever))
+
+        try:
+            (lambda: exchange.create_limit_sell_order(
+                self.coin, q, entry_limit, {'leverage': self.lever, 'closeOrder': True if side == 'long' else False}))()
+
+            if side != 'long':
+                (lambda: exchange.create_stop_limit_order(
+                    self.coin, 'buy', q, exit_limit, exit_limit, {'closeOrder': True, 'reduceOnly': True}))()
+
+        except Exception as e:
+            print(e)
+            pass
+
+    def buy(self, price: float = None, side: str = None, qty: int = None) -> None:
         print('buy', self.coin)
         q = self.q if qty == None else qty
-        target = self.last if price == None else price
-        (lambda: exchange.create_limit_buy_order(
-            self.coin, q, target, {'leverage': self.lever, 'closeOrder': True if side == 'short' else False}))()
-        (lambda: exchange.create_stop_limit_order(
-            self.coin, 'sell', self.q, (target+(target*0.1/self.lever)), (target+(target*0.1/self.lever)), {'closeOrder': True}))()
+
+        entry_limit = self.last if price == None else price
+        exit_limit = (entry_limit+(entry_limit*0.1/self.lever))
+
+        try:
+            (lambda: exchange.create_limit_buy_order(
+                self.coin, q, entry_limit, {'leverage': self.lever, 'closeOrder': True if side == 'short' else False}))()
+
+            if side != 'short':
+                (lambda: exchange.create_stop_limit_order(
+                    self.coin, 'sell', q, exit_limit, exit_limit, {'closeOrder': True, 'reduceOnly': True}))()
+
+        except Exception as e:
+            print(e)
+            pass
 
 
 SBX = ta.Strategy(name='SBX', ta=[
@@ -62,11 +83,77 @@ SBX = ta.Strategy(name='SBX', ta=[
     {'kind': 'ema', 'close': 'close', 'length': 8},
     {'kind': 'ema', 'close': 'close', 'length': 13},
     {'kind': 'ema', 'close': 'close', 'length': 21},
+    {'kind': 'vwma', 'close': 'close', 'length': 50},
     {'kind': 'vwma', 'close': 'close', 'length': 200},
 ])
 
-while True:
 
+def strategy(coin: str, tf: str) -> None:
+    try:
+
+        sleep(exchange.rateLimit/1000)
+        df = Data(coin, tf)
+        order = Order(coin)
+        df.ta.strategy(SBX)
+
+        if df['EMA_8'].iloc[-1] > df['EMA_13'].iloc[-1] > df['EMA_21'].iloc[-1] and df['VWMA_50'].iloc[-1] > df['VWMA_200'].iloc[-1]:
+
+            if (
+                    df['DMP_3'].iloc[-1] >
+                    df['DMN_3'].iloc[-1] and
+                    df['MFI_2'].iloc[-1] >= 50 and
+                    df['HA_close'].iloc[-1] >
+                    df['HA_open'].iloc[-1]):
+                order.buy()
+
+        elif df['EMA_8'].iloc[-1] < df['EMA_13'].iloc[-1] < df['EMA_21'].iloc[-1] and df['VWMA_50'].iloc[-1] < df['VWMA_200'].iloc[-1]:
+
+            if (
+                    df['DMP_3'].iloc[-1] <
+                    df['DMN_3'].iloc[-1] and
+                    df['MFI_2'].iloc[-1] <= 50 and
+                    df['HA_close'].iloc[-1] <
+                    df['HA_open'].iloc[-1]):
+                order.sell()
+    except Exception as e:
+        print(e)
+        pass
+
+
+def martingale(x: dataframe, tf: str) -> None:
+
+    try:
+
+        order = Order(x['symbol'])
+
+        if x['side'] == 'long':
+
+            if x['percentage'] <= -abs(martingale_pcnt):
+                order.buy(x['markPrice'], x['side'])
+
+            if x['percentage'] <= -abs(stop_loss):
+                order.sell(x['markPrice'], x['side'], x['contracts'])
+
+            if x['percentage'] >= abs(take_profit):
+                order.sell(x['markPrice'], x['side'], x['contracts'])
+
+        elif x['side'] == 'short':
+
+            if x['percentage'] <= -abs(martingale_pcnt):
+                order.sell(x['markPrice'], x['side'])
+
+            if x['percentage'] <= -abs(stop_loss):
+                order.buy(x['markPrice'], x['side'], x['contracts'])
+
+            if x['percentage'] >= abs(take_profit):
+                order.buy(x['markPrice'], x['side'], x['contracts'])
+
+    except Exception as e:
+        print(e)
+        pass
+
+
+while True:
     sleep(exchange.rateLimit/1000)
 
     try:
@@ -74,55 +161,17 @@ while True:
         picker = {x: [markets[x]['info']['priceChgPct']] for x in markets}
         picker = sorted(picker, key=lambda y: picker[y], reverse=True)
         positions = [x['symbol'] for x in exchange.fetch_positions()]
-        coins = picker[0:5] + positions
+        coins = picker[0:max_new_positions] + positions
 
         if exchange.fetch_balance()['USDT']['free'] > exchange.fetch_balance()['USDT']['total']/2:
+
             for coin in coins:
-
-                sleep(exchange.rateLimit/1000)
-                df = Data(coin, tf)
-                order = Order(coin)
-                df.ta.strategy(SBX)
-
-                if df['EMA_8'].iloc[-1] > df['EMA_13'].iloc[-1] > df['EMA_21'].iloc[-1] > df['VWMA_200'].iloc[-1]:
-
-                    if (
-                            df['DMP_3'].iloc[-1] >
-                            df['DMN_3'].iloc[-1] and
-                            df['MFI_2'].iloc[-1] >= 50 and
-                            df['HA_close'].iloc[-1] >
-                            df['HA_open'].iloc[-1]):
-                        order.buy()
-
-                if df['EMA_8'].iloc[-1] < df['EMA_13'].iloc[-1] < df['EMA_21'].iloc[-1] < df['VWMA_200'].iloc[-1]:
-
-                    if (
-                            df['DMP_3'].iloc[-1] <
-                            df['DMN_3'].iloc[-1] and
-                            df['MFI_2'].iloc[-1] <= 50 and
-                            df['HA_close'].iloc[-1] <
-                            df['HA_open'].iloc[-1]):
-                        order.sell()
+                strategy(coin, tf)
 
         for x in exchange.fetch_positions():
             sleep(exchange.rateLimit/1000)
-            coin = x['symbol']
-            order = Order(coin)
-
-            if x['side'] == 'long':
-                if x['percentage'] <= -abs(martingale):
-                    order.buy(x['markPrice'], x['side'], x['contracts'])
-                if x['percentage'] <= -abs(stop_loss):
-                    order.sell(x['markPrice'], x['side'], x['contracts'])
-                if x['percentage'] >= abs(take_profit):
-                    order.sell(x['markPrice'], x['side'], x['contracts'])
-            elif x['side'] == 'short':
-                if x['percentage'] <= -abs(martingale):
-                    order.sell(x['markPrice'], x['side'], x['contracts'])
-                if x['percentage'] <= -abs(stop_loss):
-                    order.buy(x['markPrice'], x['side'], x['contracts'])
-                if x['percentage'] >= abs(take_profit):
-                    order.buy(x['markPrice'], x['side'], x['contracts'])
+            strategy(x['symbol'], tf)
+            martingale(x, tf)
 
     except Exception as e:
         print(e)
