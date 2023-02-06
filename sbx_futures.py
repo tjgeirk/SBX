@@ -4,15 +4,15 @@ from ccxt import kucoinfutures
 from time import sleep
 import pandas_ta as ta
 
-tf = '5m'
+tfs = ['5m']
 
-max_leverage = 5
+max_leverage = 10
 take_profit = 0.01
 stop_profit = 0.1
-stop_loss = 0.1
+stop_loss = 0.2
 martingale_pcnt = 0.01
 max_new_positions = 6
-risk_pcnt = 0.1
+risk_pcnt = 0.01
 
 exchange = kucoinfutures({
     'apiKey': '',
@@ -21,7 +21,7 @@ exchange = kucoinfutures({
 })
 
 
-def Data(coin: str, tf: str = tf) -> dataframe:
+def Data(coin: str, tf: str) -> dataframe:
     data = {}
     for i, v in enumerate(['date', 'open', 'high', 'low', 'close', 'volume']):
         data[v] = {}
@@ -51,9 +51,8 @@ class Order:
             (lambda: exchange.create_limit_sell_order(
                 self.coin, q, entry_limit, {'leverage': self.lever, 'closeOrder': True if side == 'long' else False}))()
 
-            if side != 'long':
-                (lambda: exchange.create_stop_limit_order(
-                    self.coin, 'buy', q, exit_limit, exit_limit, {'closeOrder': True, 'reduceOnly': True}))()
+            (lambda: exchange.create_stop_limit_order(
+                self.coin, 'buy', q, exit_limit, exit_limit, {'closeOrder': True, 'reduceOnly': True}))()
 
         except Exception as e:
             print(e)
@@ -70,9 +69,8 @@ class Order:
             (lambda: exchange.create_limit_buy_order(
                 self.coin, q, entry_limit, {'leverage': self.lever, 'closeOrder': True if side == 'short' else False}))()
 
-            if side != 'short':
-                (lambda: exchange.create_stop_limit_order(
-                    self.coin, 'sell', q, exit_limit, exit_limit, {'closeOrder': True, 'reduceOnly': True}))()
+            (lambda: exchange.create_stop_limit_order(
+                self.coin, 'sell', q, exit_limit, exit_limit, {'closeOrder': True, 'reduceOnly': True}))()
 
         except Exception as e:
             print(e)
@@ -86,8 +84,7 @@ SBX = ta.Strategy(name='SBX', ta=[
     {'kind': 'ema', 'close': 'close', 'length': 8},
     {'kind': 'ema', 'close': 'close', 'length': 13},
     {'kind': 'ema', 'close': 'close', 'length': 21},
-    {'kind': 'vwma', 'close': 'close', 'length': 50},
-    {'kind': 'vwma', 'close': 'close', 'length': 200},
+    {'kind': 'ema', 'close': 'close', 'length': 55},
 ])
 
 
@@ -97,10 +94,13 @@ def strategy(coin: str, tf: str) -> None:
         df = Data(coin, tf)
         order = Order(coin)
         df.ta.strategy(SBX)
+        toCancel = [x['id'] for x in exchange.fetch_open_orders(
+            coin) if x['info']['closeOrder'] == False]
+        for id in toCancel:
+            exchange.cancel_order(id)
 
         if (
-            df['EMA_8'].iloc[-1] > df['EMA_13'].iloc[-1] > df['EMA_21'].iloc[-1] and
-            df['HA_close'].iloc[-1] > df['VWMA_50'].iloc[-1] > df['VWMA_200'].iloc[-1] and
+            df['EMA_8'].iloc[-1] > df['EMA_13'].iloc[-1] > df['EMA_21'].iloc[-1] > df['EMA_55'].iloc[-1] and
             df['DMP_3'].iloc[-1] > df['DMN_3'].iloc[-1] and
             df['MFI_2'].iloc[-1] >= 50 and
             df['HA_close'].iloc[-1] > df['HA_open'].iloc[-1]
@@ -108,8 +108,7 @@ def strategy(coin: str, tf: str) -> None:
             order.buy()
 
         elif (
-            df['EMA_8'].iloc[-1] < df['EMA_13'].iloc[-1] < df['EMA_21'].iloc[-1] and
-            df['HA_close'].iloc[-1] < df['VWMA_50'].iloc[-1] < df['VWMA_200'].iloc[-1] and
+            df['EMA_8'].iloc[-1] < df['EMA_13'].iloc[-1] < df['EMA_21'].iloc[-1] < df['EMA_55'].iloc[-1] and
             df['DMP_3'].iloc[-1] < df['DMN_3'].iloc[-1] and
             df['MFI_2'].iloc[-1] <= 50 and
             df['HA_close'].iloc[-1] < df['HA_open'].iloc[-1]
@@ -128,38 +127,26 @@ def martingale(x: dataframe, tf: str) -> None:
         df.ta.strategy(SBX)
 
         if x['side'] == 'long':
-
-            if df['HA_close'].iloc[-1] < df['VWMA_50'].iloc[-1] and x['percentage'] > 0:
-                order.sell(x['markPrice'], x['side'], x['contracts'])
-
-            if df['HA_close'].iloc[-1] < df['HA_open'].iloc[-1] and x['percentage'] > 0:
-                order.sell(x['markPrice'], x['side'], x['contracts'])
-
-            if x['percentage'] <= -abs(martingale_pcnt):
-                order.buy(x['markPrice'], x['side'])
-
             if x['percentage'] <= -abs(stop_loss):
                 order.sell(x['markPrice'], x['side'], x['contracts'])
-
-            if x['percentage'] >= abs(take_profit):
-                order.sell(x['markPrice'], x['side'], x['contracts'])
+            elif x['percentage'] <= -abs(martingale_pcnt):
+                order.buy(x['markPrice'], x['side'])
+            elif x['percentage'] > 0:
+                if x['percentage'] >= abs(take_profit):
+                    order.sell(x['markPrice'], x['side'], x['contracts'])
+                elif df['HA_close'].iloc[-1] < df['HA_open'].iloc[-1]:
+                    order.sell(x['markPrice'], x['side'], x['contracts'])
 
         elif x['side'] == 'short':
-
-            if df['HA_close'].iloc[-1] > df['VWMA_50'].iloc[-1] and x['percentage'] > 0:
-                order.buy(x['markPrice'], x['side'], x['contracts'])
-
-            if df['HA_close'].iloc[-1] > df['HA_open'].iloc[-1] and x['percentage'] > 0:
-                order.buy(x['markPrice'], x['side'], x['contracts'])
-
-            if x['percentage'] <= -abs(martingale_pcnt):
-                order.sell(x['markPrice'], x['side'])
-
             if x['percentage'] <= -abs(stop_loss):
                 order.buy(x['markPrice'], x['side'], x['contracts'])
-
-            if x['percentage'] >= abs(take_profit):
-                order.buy(x['markPrice'], x['side'], x['contracts'])
+            elif x['percentage'] <= -abs(martingale_pcnt):
+                order.sell(x['markPrice'], x['side'])
+            elif x['percentage'] > 0:
+                if x['percentage'] >= abs(take_profit):
+                    order.buy(x['markPrice'], x['side'], x['contracts'])
+                elif df['HA_close'].iloc[-1] > df['HA_open'].iloc[-1]:
+                    order.buy(x['markPrice'], x['side'], x['contracts'])
 
     except Exception as e:
         print(e)
@@ -179,28 +166,15 @@ while True:
 
             for coin in coins:
                 print(coin)
-                strategy(coin, tf)
+                for tf in tfs:
+                    strategy(coin, tf)
 
         for x in exchange.fetch_positions():
             print(x['symbol'])
-            martingale(x, tf)
+            for tf in tfs:
+                martingale(x, tf)
 
     except Exception as e:
         print(e)
         sleep(exchange.rateLimit/1000)
-        queue = {x['symbol'] for x in exchange.fetch_open_orders()}
-        for y in [x for x in queue if x not in coins]:
-            queue.remove(y)
-        for x in queue:
-            y = sorted(exchange.fetch_open_orders(
-                x), key=lambda x: x['timestamp'])
-            for a, b in enumerate(y):
-                if a in range(0, 6):
-                    continue
-                else:
-                    try:
-                        exchange.cancel_order(b['id'])
-                    except Exception as e:
-                        print(e)
-                        continue
         continue
