@@ -1,18 +1,13 @@
-
-from pandas import DataFrame as dataframe
-from ccxt import kucoinfutures
-from time import sleep
+import pandas as pd
+import ccxt.kucoinfutures as kucoinfutures
 import pandas_ta as ta
+import time
 
 tf = '5m'
-
 max_leverage = 5
 take_profit = 0.01
-stop_profit = 0.1
-stop_loss = 0.1
-martingale_pcnt = 0.01
-max_new_positions = 6
-risk_pcnt = 0.1
+stop_loss = 0.2
+martingale = 0.01
 
 exchange = kucoinfutures({
     'apiKey': '',
@@ -20,65 +15,46 @@ exchange = kucoinfutures({
     'password': '',
 })
 
-
-def Data(coin: str, tf: str = tf) -> dataframe:
+def Data(coin, tf=tf):
     data = {}
-    for i, v in enumerate(['date', 'open', 'high', 'low', 'close', 'volume']):
-        data[v] = {}
-        for n, x in enumerate(exchange.fetch_ohlcv(coin, tf, limit=1000)):
-            data[v][n] = x[i]
-    return dataframe(data)
-
+    ohlcv = exchange.fetch_ohlcv(coin, tf, limit=1000)
+    data['date'] = [x[0] for x in ohlcv]
+    data['open'] = [x[1] for x in ohlcv]
+    data['high'] = [x[2] for x in ohlcv]
+    data['low'] = [x[3] for x in ohlcv]
+    data['close'] = [x[4] for x in ohlcv]
+    data['volume'] = [x[5] for x in ohlcv]
+    return pd.DataFrame(data)
 
 class Order:
-    def __init__(self, coin: str) -> None:
+    def __init__(self, coin):
         self.coin = coin
         self.balance = float(exchange.fetch_balance()['USDT']['total'])
         self.lever = exchange.load_markets()[coin]['info']['maxLeverage']
-        self.lever = max_leverage if max_leverage < self.lever else self.lever
+        self.lever = min(max_leverage, self.lever)
         self.last = float(exchange.fetch_ticker(coin)['last'])
-        self.q = float(self.balance/self.last)*risk_pcnt
+        self.q = float(self.balance/self.last)*0.01
         self.q = 1 if self.q < 1 else self.q
 
-    def sell(self, price: float = None, side: str = None, qty: int = None) -> None:
+    def sell(self, price=None, side=None, qty=None):
         print('sell', self.coin)
-        q = self.q if qty == None else qty
+        q = self.q if qty is None else qty
+        target = self.last if price is None else price
+        exchange.create_limit_sell_order(
+            self.coin, q, target, {'leverage': self.lever, 'closeOrder': True if side == 'long' else False})
+        exchange.create_stop_limit_order(
+            self.coin, 'buy', self.q, (target-(target*0.1/self.lever)), (target-(target*0.1/self.lever)), {'closeOrder': True})
 
-        entry_limit = self.last if price == None else price
-        exit_limit = (entry_limit-(entry_limit*stop_profit/self.lever))
-
-        try:
-            (lambda: exchange.create_limit_sell_order(
-                self.coin, q, entry_limit, {'leverage': self.lever, 'closeOrder': True if side == 'long' else False}))()
-
-            if side != 'long':
-                (lambda: exchange.create_stop_limit_order(
-                    self.coin, 'buy', q, exit_limit, exit_limit, {'closeOrder': True, 'reduceOnly': True}))()
-
-        except Exception as e:
-            print(e)
-            pass
-
-    def buy(self, price: float = None, side: str = None, qty: int = None) -> None:
+    def buy(self, price=None, side=None, qty=None):
         print('buy', self.coin)
-        q = self.q if qty == None else qty
+        q = self.q if qty is None else qty
+        target = self.last if price is None else price
+        exchange.create_limit_buy_order(
+            self.coin, q, target, {'leverage': self.lever, 'closeOrder': True if side == 'short' else False})
+        exchange.create_stop_limit_order(
+            self.coin, 'sell', self.q, (target+(target*0.1/self.lever)), (target+(target*0.1/self.lever)),
 
-        entry_limit = self.last if price == None else price
-        exit_limit = (entry_limit+(entry_limit*stop_profit/self.lever))
-
-        try:
-            (lambda: exchange.create_limit_buy_order(
-                self.coin, q, entry_limit, {'leverage': self.lever, 'closeOrder': True if side == 'short' else False}))()
-
-            if side != 'short':
-                (lambda: exchange.create_stop_limit_order(
-                    self.coin, 'sell', q, exit_limit, exit_limit, {'closeOrder': True, 'reduceOnly': True}))()
-
-        except Exception as e:
-            print(e)
-            pass
-
-
+            
 SBX = ta.Strategy(name='SBX', ta=[
     {'kind': 'ha'},
     {'kind': 'mfi', 'length': 2},
