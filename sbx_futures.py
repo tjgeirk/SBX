@@ -90,9 +90,9 @@ def process_coin(coin: str) -> None:
     order = Order(coin)
     df.ta.strategy(SBX)
 
-    ema2 = df['EMA_2'].iloc[-1]
-    ema3 = df['EMA_3'].iloc[-1]
-    ema5 = df['EMA_5'].iloc[-1]
+    ema2 = df['EMA_8'].iloc[-1]
+    ema3 = df['EMA_13'].iloc[-1]
+    ema5 = df['EMA_21'].iloc[-1]
     ema200 = df['EMA_200'].iloc[-1]
     ha_close = df['HA_close'].iloc[-1]
     ha_open = df['HA_open'].iloc[-1]
@@ -115,9 +115,9 @@ def process_coin(coin: str) -> None:
 
     # print(interval)
 
-    if (ema2 > ema3 > ema5 > ema200) and (ha_close > ha_open):
+    if (ema8 > ema13 > ema21 > ema200) and (ha_close > ha_open):
         order.buy()
-    if (ema2 < ema3 < ema5 < ema200) and (ha_close < ha_open):
+    if (ema8 < ema13 < ema21 < ema200) and (ha_close < ha_open):
         order.sell()
 
 
