@@ -78,9 +78,9 @@ class Order:
 
 SBX = ta.Strategy(name='SBX', ta=[
     {'kind': 'ha'},
-    {'kind': 'ema', 'close': 'close', 'length': 2},
-    {'kind': 'ema', 'close': 'close', 'length': 3},
-    {'kind': 'ema', 'close': 'close', 'length': 4},
+    {'kind': 'ema', 'close': 'close', 'length': 5},
+    {'kind': 'ema', 'close': 'close', 'length': 8},
+    {'kind': 'ema', 'close': 'close', 'length': 13},
     {'kind': 'ema', 'close': 'close', 'length': 200},
 ])
 
@@ -90,9 +90,9 @@ def process_coin(coin: str) -> None:
     order = Order(coin)
     df.ta.strategy(SBX)
 
-    ema2 = df['EMA_8'].iloc[-1]
-    ema3 = df['EMA_13'].iloc[-1]
-    ema5 = df['EMA_21'].iloc[-1]
+    ema2 = df['EMA_5'].iloc[-1]
+    ema3 = df['EMA_8'].iloc[-1]
+    ema5 = df['EMA_13'].iloc[-1]
     ema200 = df['EMA_200'].iloc[-1]
     ha_close = df['HA_close'].iloc[-1]
     ha_open = df['HA_open'].iloc[-1]
@@ -115,9 +115,9 @@ def process_coin(coin: str) -> None:
 
     # print(interval)
 
-    if (ema8 > ema13 > ema21 > ema200) and (ha_close > ha_open):
+    if (ema200 < ema5 < ema8 < ema13) and (ha_close > ha_open):
         order.buy()
-    if (ema8 < ema13 < ema21 < ema200) and (ha_close < ha_open):
+    if (ema200 > ema5 > ema8 > ema13) and (ha_close < ha_open):
         order.sell()
 
 
