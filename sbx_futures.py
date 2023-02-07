@@ -4,7 +4,6 @@ import pandas as pd
 import pandas_ta as ta
 import numpy as np
 import time
-import openai
 
 tf = '5m'
 max_leverage = 5
@@ -18,8 +17,6 @@ exchange = ccxt.kucoinfutures({
     'password': '',
     'adjustForTimeDifference': True,
 })
-
-# openai.api_key = ''
 
 
 def Data(coin, tf=tf) -> pd.DataFrame:
@@ -90,37 +87,18 @@ def process_coin(coin: str) -> None:
     order = Order(coin)
     df.ta.strategy(SBX)
 
-    ema2 = df['EMA_5'].iloc[-1]
-    ema3 = df['EMA_8'].iloc[-1]
-    ema5 = df['EMA_13'].iloc[-1]
+    ema5 = df['EMA_5'].iloc[-1]
+    ema8 = df['EMA_8'].iloc[-1]
+    ema13 = df['EMA_13'].iloc[-1]
     ema200 = df['EMA_200'].iloc[-1]
     ha_close = df['HA_close'].iloc[-1]
     ha_open = df['HA_open'].iloc[-1]
-    
-    # input_text = ''
-    # input_text += f"Closes: {df['HA_close']}, Opens: {df['HA_open']}"
 
-    # prompt = (f"Please identify the average number of periods between trend reversals based on these haikin-ashi candles, and return only the number with no additional text:\n\n"
-    #           f"{input_text}")
-    
-    # completions = openai.Completion.create(
-    #     engine="text-davinci-002",
-    #     prompt=prompt,
-    #     max_tokens=1024,
-    #     n=1,
-    #     stop=None,
-    #     temperature=0.5,
-    # )
-    # interval = completions.choices[0].text.strip()
-
-    # print(interval)
 
     if (ema200 < ema5 < ema8 < ema13) and (ha_close > ha_open):
         order.buy()
     if (ema200 > ema5 > ema8 > ema13) and (ha_close < ha_open):
         order.sell()
-
-
 
 
 def process_position(x) -> None:
@@ -159,6 +137,7 @@ def cancelOrders() -> None:
             else:
                 exchange.cancel_order(order['id'])
 
+
 while True:
     try:
         time.sleep(exchange.rateLimit/1000)
@@ -169,11 +148,9 @@ while True:
             positions = [x['symbol'] for x in exchange.fetch_positions()]
             coins = picker[0:4] + positions
 
-            strat = {executor.submit(process_coin, coin)
-                                     : coin for coin in coins}
+            strat = {executor.submit(process_coin, coin)                     : coin for coin in coins}
 
-            pos = {executor.submit(process_position, x)
-                                   : x for x in exchange.fetch_positions()}
+            pos = {executor.submit(process_position, x)                   : x for x in exchange.fetch_positions()}
 
             for future in concurrent.futures.as_completed(strat):
                 continue
