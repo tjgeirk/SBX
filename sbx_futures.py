@@ -1,5 +1,5 @@
 import concurrent.futures
-import ccxt
+import ccxt.async_support as ccxt
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
@@ -74,29 +74,33 @@ class Order:
 
 SBX = ta.Strategy(name='SBX', ta=[
     {'kind': 'ha'},
-    {'kind': 'macd', 'fast': 5, 'slow': 8, 'signal': 3},
+    {'kind': 'ema', 'close': 'HA_open', 'length': 8, 'prefix': 'O'},
+    {'kind': 'ema', 'close': 'HA_close', 'length': 8, 'prefix': 'C'},
+    {'kind': 'ema', 'close': 'HA_high', 'length': 21, 'prefix': 'H'},
+    {'kind': 'ema', 'close': 'HA_low', 'length': 21, 'prefix': 'L'},
 ])
 
 
 def process_coin(coin: str):
-    time.sleep(exchange.rateLimit/1000)
-    print(coin, "Process")
     df = get_data(coin, tf)
     order = Order(coin)
     df.ta.strategy(SBX)
-    macd = df['MACD_5_8_3'].iloc[-1]
-    hist = df['MACDh_5_8_3'].iloc[-1]
-    ha_close = df['HA_close'].iloc[-1]
-    ha_open = df['HA_open'].iloc[-1]
-
-    if  (ha_close > ha_open) and (macd > 0) and (hist > 0):
+    
+    oma8 = df['O_EMA_8'].iloc[-1]
+    cma8 = df['C_EMA_8'].iloc[-1]
+    hma21 = df['H_EMA_21'].iloc[-1]
+    lma21 = df['L_EMA_21'].iloc[-1]
+    
+    green = True if df['HA_open'].iloc[-1] > df['HA_close'].iloc[-1] else False
+    red   = True if df['HA_open'].iloc[-1] < df['HA_close'].iloc[-1] else False
+    
+    if (green is True) and (cma8 > oma8) and (cma8 > hma21):
         order.buy()
-    if (ha_close < ha_open) and (macd < 0) and (hist < 0):
+    if (red is True) and (cma8 < oma8) and (cma8 < lma21):
         order.sell()
 
 
 def process_position(x):
-    time.sleep(exchange.rateLimit/1000)
     order = Order(x['symbol'])
     coin = x['symbol']
     print(coin, "Position")
@@ -134,7 +138,7 @@ def process_open_orders(coin):
 def main():
     markets = exchange.load_markets(True)
     picker = sorted({x: [markets[x]['info']['priceChgPct']] for x in markets}, key=lambda y: y[1], reverse=True)
-    coins = picker[0:1]
+    coins = picker[0:5]
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         cn = {executor.submit(process_coin, coin): coin for coin in coins}
         ps = {executor.submit(process_position, x): x for x in exchange.fetch_positions()}
