@@ -78,29 +78,22 @@ class Order:
 
 SBX = ta.Strategy(name='SBX', ta=[
     {'kind': 'ha'},
-    {'kind': 'ema', 'close': 'HA_open', 'length': 8, 'prefix': 'O'},
-    {'kind': 'ema', 'close': 'HA_close', 'length': 8, 'prefix': 'C'},
-    {'kind': 'ema', 'close': 'HA_high', 'length': 21, 'prefix': 'H'},
-    {'kind': 'ema', 'close': 'HA_low', 'length': 21, 'prefix': 'L'},
+    {'kind': 'ema', 'close': 'HA_close', 'length': 20},
 ])
 
 
 async def process_coin(coin: str):
     df = await get_data(coin, tf)
     df.ta.strategy(SBX)
-    oma8 = df['O_EMA_8'].iloc[-1]
-    cma8 = df['C_EMA_8'].iloc[-1]
-    hma21 = df['H_EMA_21'].iloc[-1]
-    lma21 = df['L_EMA_21'].iloc[-1]
-    green = True if df['HA_open'].iloc[-1] > df['HA_close'].iloc[-1] else False
-    red = True if df['HA_open'].iloc[-1] < df['HA_close'].iloc[-1] else False
+    ema20 = df['EMA_20'].iloc[-1]
+    ha_close = df['HA_close'].iloc[-1]
+    ha_open = df['HA_open'].iloc[-1]
 
     params = await get_order_params(coin)
     order = Order(coin, params['lever'], params['last'], params['q'])
-
-    if (green is True) and (cma8 > oma8) and (cma8 > hma21):
+    if (ha_open < ha_close) and (ha_close > ema20):
         await order.buy()
-    if (red is True) and (cma8 < oma8) and (cma8 < lma21):
+    if (ha_open > ha_close) and (ha_close < ema20):
         await order.sell()
 
 
@@ -108,12 +101,12 @@ async def process_position(x):
     coin = x['symbol']
     df = await get_data(coin, tf)
 
-    params = await get_order_params(x['symbol'])
-    order = Order(x['symbol'], params['lever'], params['last'], params['q'])
+    params = await get_order_params(coin)
+    order = Order(coin, params['lever'], params['last'], params['q'])
 
     if x['side'] == 'long':
         if x['percentage'] <= -abs(martingale):
-            await order.buy(df['lows'].iloc[-1], x['side'])
+            await order.buy(x['markPrice'], x['side'])
             print(f"Martingale at {x['percentage']*100}%")
         if x['percentage'] <= -abs(stop_loss):
             await order.sell(x['markPrice'], x['side'], x['contracts'])
@@ -124,7 +117,7 @@ async def process_position(x):
 
     elif x['side'] == 'short':
         if x['percentage'] <= -abs(martingale):
-            await order.sell(df['highs'].iloc[-1], x['side'])
+            await order.sell(x['markPrice'], x['side'])
             print(f"Martingale at {x['percentage']*100}%")
         if x['percentage'] <= -abs(stop_loss):
             await order.buy(x['markPrice'], x['side'], x['contracts'])
@@ -144,9 +137,10 @@ async def process_open_orders(coin):
 
 async def main():
     markets = await exchange.load_markets()
-    picker = sorted({x: [markets[x]['info']['priceChgPct']]
-                    for x in markets}, key=lambda y: y[1], reverse=True)
-    coins = picker[0:5]
+    ordered_coins = sorted(markets.values(), key=lambda x: x['info']['priceChgPct'], reverse=True)
+    coins = []
+    for x in range(0, 5):
+        coins.append(ordered_coins[x]['symbol'])
     tasks = [asyncio.create_task(process_coin(coin)) for coin in coins]
     tasks += [asyncio.create_task(process_position(x)) for x in await exchange.fetch_positions()]
     tasks += [asyncio.create_task(process_open_orders(coin)) for coin in coins]
