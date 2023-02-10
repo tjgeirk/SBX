@@ -5,12 +5,12 @@ import pandas_ta as ta
 import time
 
 
-tf = '5m'
-max_leverage = 5
-take_profit = 0.03
-stop_loss = 0.2
-martingale = 0.03
-trade_risk = 0.2
+tf = '15m'
+max_leverage = 20
+take_profit = 0.2
+stop_loss = 0.05
+martingale = 0.01
+trade_risk = 0.1
 
 
 exchange = ccxt.kucoinfutures({
@@ -48,7 +48,7 @@ async def process_position(x):
     coin = x['symbol']
     order = Order(coin)
     if x['side'] == 'long':
-        if x['percentage'] <= -abs(martingale):
+        if x['percentage'] >= abs(martingale):
             await order.buy(x['markPrice'], x['side'])
             print(f"Martingale at {x['percentage']*100}%")
         if x['percentage'] <= -abs(stop_loss):
@@ -59,7 +59,7 @@ async def process_position(x):
             print(f"Take-Profit at {x['percentage']*100}%")
 
     elif x['side'] == 'short':
-        if x['percentage'] <= -abs(martingale):
+        if x['percentage'] >= abs(martingale):
             await order.sell(x['markPrice'], x['side'])
             print(f"Martingale at {x['percentage']*100}%")
         if x['percentage'] <= -abs(stop_loss):
@@ -146,7 +146,6 @@ async def main():
         tasks += [asyncio.create_task(process_open_orders(coin))
                   for coin in coins]
         await asyncio.gather(*tasks)
-        await asyncio.sleep(75)
 
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
