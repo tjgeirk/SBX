@@ -21,29 +21,42 @@ exchange = ccxt.kucoinfutures({
 })
 
 
-SBX = ta.Strategy(name='SBX', ta=[
-    {'kind': 'ha'},
-    {'kind': 'macd', 'close': 'volume', 'prefix': 'VOL'},
-    {'kind': 'macd', 'close': 'close'},
-])
+SBX = ta.Strategy(
+    name="SBX",
+    ta=[
+        {"kind": "tema", "close": "close", "length": 20},
+        {"kind": "tema", "close": "close", "length": 50},
+        {"kind": "tema", "close": "close", "length": 200},
+        {"kind": "stoch", "close": "close"},
+        {"kind": "macd", "close": "volume"},
+    ],
+)
 
-
-async def process_coin(coin: str):
-    df = pd.DataFrame(await exchange.fetch_ohlcv(coin, tf), columns=[
-                      'timestamp', 'open', 'high', 'low', 'close', 'volume'])
+async def process_coin(coin):
+    df = pd.DataFrame(
+        await exchange.fetch_ohlcv(coin, tf),
+        columns=["timestamp", "open", "high", "low", "close", "volume"],
+    )
     df.ta.strategy(SBX)
-    order = Order(coin)
-    c = df['HA_close'].iloc[-1]
-    o = df['HA_open'].iloc[-1]
+    df['STOCHh_14_3_3'] = df['STOCHk_14_3_3'] - df['STOCHd_14_3_3']
+    stoch = df['STOCHh_14_3_3'].iloc[-1]
     macd = df['MACDh_12_26_9'].iloc[-1]
-    macv = df['VOL_MACDh_12_26_9'].iloc[-1]
+    t20_up = ta.increasing(df['TEMA_20']).iloc[-1]
+    t50_up = ta.increasing(df['TEMA_50']).iloc[-1]
+    t200_up = ta.increasing(df['TEMA_200']).iloc[-1]
+    t20_dn = ta.decreasing(df['TEMA_20']).iloc[-1]
+    t50_dn = ta.decreasing(df['TEMA_50']).iloc[-1]
+    t200_dn = ta.decreasing(df['TEMA_200']).iloc[-1]
+    order = Order(coin)
 
-    if macd > 0 and macv > 0 and c > o:
+    if (t200_up == t50_up == t20_up == 1) and (stoch > 0) and (macd > 0):
         await order.buy()
-    elif macd < 0 and macv < 0 and c < o:
+        print(f"Buy {coin}")
+    elif (t200_dn == t50_dn == t20_dn == 1) and (stoch < 0) and (macd < 0):
         await order.sell()
-
-
+        print(f"Sell {coin}")
+        
+        
 async def process_position(x):
     coin = x['symbol']
     order = Order(coin)
