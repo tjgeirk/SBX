@@ -1,3 +1,4 @@
+from itertools import cycle
 import ccxt
 import ccxt.async_support as ccxt
 import asyncio
@@ -7,18 +8,23 @@ import pandas_ta as ta
 indicators = ta.Strategy('Indicators', ta=[
     {'kind': 'ha'},
     {'kind': 'tema', 'length': 50},
-    {'kind': 'tema', 'length': 200},
+    {'kind': 'tema', 'length': 20},
     {'kind': 'macd', 'fast': 8, 'slow': 21, 'signal': 3},
     {'kind': 'macd', 'fast': 8, 'slow': 21, 'signal': 3, 'prefix': 'VOL', 'close': 'volume'}])
 
 
 async def strategy(exchange, ticker, balance):
+    cycle_count += 1
+
+    if cycle_count % 100 == 0:
+        print(f'Cycles Completed: {cycle_count}')
+
+    await asyncio.sleep(1)
     df = pd.DataFrame(await exchange.fetch_ohlcv(ticker, '15m'))
     df.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
     df.ta.strategy(indicators)
-    print(ticker)
-    ema50 = df['TEMA_50'].iloc[-1]
-    ema200 = df['TEMA_200'].iloc[-1]
+    tema50 = df['TEMA_50'].iloc[-1]
+    tema20 = df['TEMA_20'].iloc[-1]
     macv = df['VOL_MACDh_8_21_3'].iloc[-1]
     macd = df['MACDh_8_21_3'].iloc[-1]
     ha_open = df['HA_open'].iloc[-1]
@@ -26,12 +32,14 @@ async def strategy(exchange, ticker, balance):
     close = df['close'].iloc[-1]
 
     try:
-        if (macd > 0) and (macv > 0) and (ema50 > ema200) and (ha_close > ha_open):
+
+        if (macd > 0) and (macv > 0) and (tema20 > tema50) and (ha_close > ha_open):
             await buy_coin(exchange, ticker, close, balance)
-        elif (macd < 0) and (macv < 0) and (ha_close < ha_open):
+
+        elif ha_close < tema50:
             await sell_coin(exchange, ticker, close, balance)
     except Exception as e:
-        print(e)
+        pass
 
 
 async def buy_coin(exchange, ticker, close, balance, quote_ticker='USDT'):
@@ -47,11 +55,12 @@ async def sell_coin(exchange, ticker, close, balance, quote_ticker='USDT'):
 
 
 async def main():
-     async with ccxt.kucoin({
+    async with ccxt.kucoin({
         'apiKey': '',
         'secret': '',
         'password': '',
     }) as exchange:
+
         while True:
             try:
                 balance = await exchange.fetch_balance()
@@ -66,6 +75,8 @@ async def main():
                 print(e)
                 await asyncio.sleep(1)
             await exchange.close()
+
+cycle_count = 0
 
 while __name__ == '__main__':
     try:
