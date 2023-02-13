@@ -6,8 +6,8 @@ import pandas_ta as ta
 
 indicators = ta.Strategy('Indicators', ta=[
     {'kind': 'ha'},
-    {'kind': 'ema', 'length': 50},
-    {'kind': 'ema', 'length': 200},
+    {'kind': 'tema', 'length': 50},
+    {'kind': 'tema', 'length': 200},
     {'kind': 'macd', 'fast': 8, 'slow': 21, 'signal': 3},
     {'kind': 'macd', 'fast': 8, 'slow': 21, 'signal': 3, 'prefix': 'VOL', 'close': 'volume'}])
 
@@ -17,8 +17,8 @@ async def strategy(exchange, ticker, balance):
     df.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
     df.ta.strategy(indicators)
     print(ticker)
-    ema50 = df['EMA_50'].iloc[-1]
-    ema200 = df['EMA_200'].iloc[-1]
+    ema50 = df['TEMA_50'].iloc[-1]
+    ema200 = df['TEMA_200'].iloc[-1]
     macv = df['VOL_MACDh_8_21_3'].iloc[-1]
     macd = df['MACDh_8_21_3'].iloc[-1]
     ha_open = df['HA_open'].iloc[-1]
