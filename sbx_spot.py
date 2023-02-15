@@ -1,5 +1,3 @@
-from itertools import cycle
-import ccxt
 import ccxt.async_support as ccxt
 import asyncio
 import pandas as pd
@@ -7,79 +5,63 @@ import pandas_ta as ta
 
 indicators = ta.Strategy('Indicators', ta=[
     {'kind': 'ha'},
-    {'kind': 'tema', 'length': 50},
-    {'kind': 'tema', 'length': 20},
-    {'kind': 'macd', 'fast': 8, 'slow': 21, 'signal': 3},
-    {'kind': 'macd', 'fast': 8, 'slow': 21, 'signal': 3, 'prefix': 'VOL', 'close': 'volume'}])
+    {'kind': 'ema', 'length': 8, 'close': 'close', 'prefix': 'C'},
+    {'kind': 'ema', 'length': 8, 'close': 'open', 'prefix': 'O'},
+])
 
 
 async def strategy(exchange, ticker, balance):
-    cycle_count += 1
-
-    if cycle_count % 100 == 0:
-        print(f'Cycles Completed: {cycle_count}')
-
-    await asyncio.sleep(1)
-    df = pd.DataFrame(await exchange.fetch_ohlcv(ticker, '15m'))
-    df.columns = ['time', 'open', 'high', 'low', 'close', 'volume']
+    print(ticker)
+    df = pd.DataFrame(await exchange.fetch_ohlcv(ticker, '15m'), columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df.ta.strategy(indicators)
-    tema50 = df['TEMA_50'].iloc[-1]
-    tema20 = df['TEMA_20'].iloc[-1]
-    macv = df['VOL_MACDh_8_21_3'].iloc[-1]
-    macd = df['MACDh_8_21_3'].iloc[-1]
-    ha_open = df['HA_open'].iloc[-1]
-    ha_close = df['HA_close'].iloc[-1]
+    open_ema = df['O_EMA_8'].iloc[-1]
+    close_ema = df['C_EMA_8'].iloc[-1]
+    ha_open = df['HA_low'].iloc[-1]
+    ha_close = df['HA_high'].iloc[-1]
     close = df['close'].iloc[-1]
 
-    try:
-
-        if (macd > 0) and (macv > 0) and (tema20 > tema50) and (ha_close > ha_open):
-            await buy_coin(exchange, ticker, close, balance)
-
-        elif ha_close < tema50:
-            await sell_coin(exchange, ticker, close, balance)
-    except Exception as e:
-        pass
+    if (open_ema > close_ema) and (ha_open < ha_close):
+        await buy_coin(exchange, ticker, close, balance)
+    elif (open_ema < close_ema) and (ha_open > ha_close):
+        await sell_coin(exchange, ticker, close, balance)
 
 
-async def buy_coin(exchange, ticker, close, balance, quote_ticker='USDT'):
-    print(f'BUY {ticker}')
-    order = await exchange.create_limit_buy_order(ticker, balance[quote_ticker]['free']/10/close, close, {'timeInForce': 'GTT', 'cancelAfter': 300})
-    print(order)
+async def buy_coin(exchange, ticker, close, balance):
+    balance = balance['free']['USDT']
+    amount = balance / 5 / close
+    order_params = {'timeInForce': 'GTT', 'cancelAfter': 300}
+    await exchange.create_limit_buy_order(ticker, amount, close, order_params)
 
 
-async def sell_coin(exchange, ticker, close, balance, quote_ticker='USDT'):
-    print(f'SELL {ticker}')
-    order = await exchange.create_limit_sell_order(ticker, balance[ticker.split('/')[0]]['free'], close, {'timeInForce': 'GTT', 'cancelAfter': 300})
-    print(order)
+async def sell_coin(exchange, ticker, close, balance):
+    balance = balance['free'][ticker.replace('/USDT', '')]
+    order_params = {'timeInForce': 'GTT', 'cancelAfter': 300}
+    await exchange.create_limit_sell_order(ticker, balance, close, order_params)
 
 
 async def main():
-    async with ccxt.kucoin({
+    exchange = ccxt.kucoin({
         'apiKey': '',
         'secret': '',
         'password': '',
-    }) as exchange:
+    })
 
-        while True:
-            try:
-                balance = await exchange.fetch_balance()
-                positions = [x for x in sorted(
-                    balance['info']['data'], key=lambda x: x['balance'], reverse=True) if float(x['balance']) > 0]
-                tickers = await exchange.fetch_tickers()
-                tickers = {x: tickers[x] for x in tickers if 'USDT' in x}
-                gainers = sorted(
-                    tickers, key=lambda x: tickers[x]['percentage'], reverse=True)[:5]
-                await asyncio.gather(*[strategy(exchange, ticker, balance) for ticker in gainers], *[strategy(exchange, ticker, balance) for ticker in [f"{x['currency']}/USDT" for x in positions if x['currency'] != 'USDT']])
-            except Exception as e:
-                print(e)
-                await asyncio.sleep(1)
-            await exchange.close()
+    while True:
+        try:
+            balance = await exchange.fetch_balance()
+            tickers = await exchange.fetch_tickers()
+            coins = [x['symbol'] for x in sorted(
+                tickers.values(), key=lambda y: y['percentage'], reverse=True)[:3]]
+            positions = [f"{currency}/USDT" for currency in balance['total'].keys(
+            ) if currency not in ['USDT', 'KCS', 'UBXT'] and balance[currency]['total'] != 0.0]
+            coins += positions
+            await asyncio.gather(*[strategy(exchange, coin, balance) for coin in set(coins)])
+        except Exception as e:
+            print(e)
+        await asyncio.sleep(2)
 
-cycle_count = 0
+    await exchange.close()
 
-while __name__ == '__main__':
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        print(e)
+
+if __name__ == '__main__':
+    asyncio.run(main())
