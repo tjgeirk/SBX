@@ -23,6 +23,7 @@ exchange = ccxt.kucoinfutures({
 
 indicators = ta.Strategy('Indicators', ta=[
     {'kind': 'ha'},
+    {'kind': 'stoch'},
     {'kind': 'ema', 'length': 200, 'close': 'close', 'prefix': 'C'},
     {'kind': 'ema', 'length': 200, 'close': 'open', 'prefix': 'O'},
     {'kind': 'ema', 'length': 8, 'close': 'close', 'prefix': 'C'},
