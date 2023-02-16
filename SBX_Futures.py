@@ -63,6 +63,10 @@ async def process_coin(coin, positions):
                 if x['percentage'] >= abs(take_profit):
                     await order.sell(x['markPrice'], x['side'], x['contracts'])
                     print(f"Take-Profit at {x['percentage']*100}%")
+                if x['percentage'] >= 0.02:
+                    high_price = df['high'].max()
+                    stop_price = high_price - high_price*0.02
+                    await order._place_stop_limit_order('sell', x['contracts'], stop_price)
 
             elif x['side'] == 'short':
                 if x['percentage'] >= abs(martingale):
@@ -74,6 +78,10 @@ async def process_coin(coin, positions):
                 if x['percentage'] >= abs(take_profit):
                     await order.buy(x['markPrice'], x['side'], x['contracts'])
                     print(f"Take-Profit at {x['percentage']*100}%")
+                if x['percentage'] >= 0.02:
+                    low_price = df['low'].min()
+                    stop_price = low_price + low_price*0.02
+                    await order._place_stop_limit_order('buy', x['contracts'], stop_price)
 
 
 class Order:
