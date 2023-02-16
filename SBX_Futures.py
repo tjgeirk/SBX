@@ -5,9 +5,9 @@ import pandas_ta as ta
 import time
 
 
-tf = '1m'
+tf = '15m'
 max_leverage = 5
-take_profit = 0.2
+take_profit = 0.05
 stop_loss = 0.1
 martingale = 0.01
 trade_risk = 0.25
@@ -23,31 +23,14 @@ exchange = ccxt.kucoinfutures({
 
 indicators = ta.Strategy('Indicators', ta=[
     {'kind': 'ha'},
-    {'kind': 'stoch'},
-    {'kind': 'ema', 'length': 200, 'close': 'close', 'prefix': 'C'},
-    {'kind': 'ema', 'length': 200, 'close': 'open', 'prefix': 'O'},
-    {'kind': 'ema', 'length': 8, 'close': 'close', 'prefix': 'C'},
-    {'kind': 'ema', 'length': 8, 'close': 'open', 'prefix': 'O'},
+    {'kind': 'stoch', 'k': 14, 'd': 3, 'smooth_k': 3},
+    {'kind': 'ema', 'length': 7, 'close': 'close', 'prefix': 'C'},
+    {'kind': 'ema', 'length': 7, 'close': 'open', 'prefix': 'O'},
 ])
 
 
-async def process_coin(coin, positions):
-    df = pd.DataFrame(await exchange.fetch_ohlcv(coin, tf), columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df.ta.strategy(indicators)
-    open_ema_short = df['O_EMA_8'].iloc[-1]
-    close_ema_short = df['C_EMA_8'].iloc[-1]
-    open_ema_long = df['O_EMA_200'].iloc[-1]
-    close_ema_long = df['C_EMA_200'].iloc[-1]
-    ha_open = df['HA_low'].iloc[-1]
-    ha_close = df['HA_high'].iloc[-1]
-    order = Order(coin)
-
-    if (open_ema_long < close_ema_long) and (
-            open_ema_short > close_ema_short) and (ha_open < ha_close):
-        await order.buy()
-    elif (open_ema_long > close_ema_long) and (
-            open_ema_short < close_ema_short) and (ha_open > ha_close):
-        await order.sell()
+async def process_coin(coin, positions, balance):
+    order = Order(coin, balance)
 
     for x in positions:
         if x['symbol'] != coin:
@@ -63,11 +46,6 @@ async def process_coin(coin, positions):
                 if x['percentage'] >= abs(take_profit):
                     await order.sell(x['markPrice'], x['side'], x['contracts'])
                     print(f"Take-Profit at {x['percentage']*100}%")
-                if x['percentage'] >= 0.02:
-                    high_price = df['high'].max()
-                    stop_price = high_price - high_price*0.02*order.lever
-                    await order._place_stop_limit_order('sell', x['contracts'], stop_price)
-
             elif x['side'] == 'short':
                 if x['percentage'] >= abs(martingale):
                     await order.sell(x['markPrice'], x['side'])
@@ -78,46 +56,48 @@ async def process_coin(coin, positions):
                 if x['percentage'] >= abs(take_profit):
                     await order.buy(x['markPrice'], x['side'], x['contracts'])
                     print(f"Take-Profit at {x['percentage']*100}%")
-                if x['percentage'] >= 0.02:
-                    low_price = df['low'].min()
-                    stop_price = low_price + low_price*0.02*order.lever
-                    await order._place_stop_limit_order('buy', x['contracts'], stop_price)
+
+    ohlcv = await exchange.fetch_ohlcv(coin, tf)
+    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+
+    df.ta.strategy(indicators)
+
+    k = df['STOCHk_14_3_3'].iloc[-1]
+    d = df['STOCHd_14_3_3'].iloc[-1]
+    open_ema = df['O_EMA_7'].iloc[-1]
+    close_ema = df['C_EMA_7'].iloc[-1]
+    ha_open = df['HA_low'].iloc[-1]
+    ha_close = df['HA_high'].iloc[-1]
+
+    if (open_ema > close_ema) and (k > d):
+        await order.buy()
+    elif (open_ema < close_ema) and (k < d):
+        await order.sell()
 
 
 class Order:
-    def __init__(self, coin):
+    def __init__(self, coin, balance):
         self.coin = coin
-        self.balance = None
+        self.balance = balance['free']['USDT']
         self.lever = None
         self.last = None
         self.q = None
 
     async def _params(self):
-        balance = float((await exchange.fetch_balance())['USDT']['total'])
         lever = min(max_leverage, (await exchange.load_markets())[self.coin]['info']['maxLeverage'])
         last = float((await exchange.fetch_ticker(self.coin))['last'])
-        q = max([float(balance/last)*0.01, 1])
-        self.balance = balance
+        q = max([float(self.balance/last)*0.01, 1])
         self.lever = lever
         self.last = last
         self.q = q
         return {'balance': self.balance, 'lever': self.lever, 'last': self.last, 'q': self.q}
 
-    async def _place_stop_limit_order(self, side, size, target):
-        try:
-            stop_price = target + \
-                ((side == 'sell') - (side == 'buy')) * \
-                (target * martingale / self.lever)
-            await exchange.create_stop_limit_order(self.coin, side, size, stop_price, stop_price, {'closeOrder': True})
-        except ccxt.BaseError as e:
-            print('Issue Placing Stop!', e)
 
     async def sell(self, price=None, side=None, qty=None):
         await self._params()
         print('sell', self.coin)
         size = qty or self.q
         target = price or self.last
-
         try:
             await exchange.create_limit_sell_order(self.coin, size, target, {'leverage': self.lever, 'closeOrder': side == 'long'})
         except ccxt.BaseError as e:
@@ -128,31 +108,32 @@ class Order:
         print('buy', self.coin)
         size = qty or self.q
         target = price or self.last
-
         try:
             await exchange.create_limit_buy_order(self.coin, size, target, {'leverage': self.lever, 'closeOrder': side == 'short'})
         except ccxt.BaseError as e:
             print('Issue Buying!', e)
 
 
-async def process_open_orders(coin):
+async def process_open_orders():
     now = time.time()
-    open_orders = await exchange.fetch_open_orders(coin)
+    open_orders = await exchange.fetch_open_orders()
     for order in open_orders:
-        if now - order['timestamp'] / 1000 > 300:
+        if now - order['timestamp'] / 1000 > 60:
             await exchange.cancel_order(order['id'])
 
 
 async def main():
     while True:
+        await process_open_orders()
+        balance = await exchange.fetch_balance()
         markets = await exchange.load_markets()
-        ordered_coins = sorted(
-            markets.values(), key=lambda x: x['info']['priceChgPct'], reverse=True)
+        markets = sorted(markets.values(), key=lambda x: x['info']['priceChgPct'], reverse=True)
         positions = await exchange.fetch_positions()
-        coins = set([x['symbol'] for x in ordered_coins]
-                    [0:5] + [x['symbol'] for x in positions])
+        coins = [x['symbol'] for x in markets][0:3]
+        coins += [x['symbol'] for x in positions]
+
         tasks = [asyncio.create_task(process_coin(
-            coin, positions)) for coin in coins]
+            coin, positions, balance)) for coin in coins]
         await asyncio.gather(*tasks)
 
 loop = asyncio.new_event_loop()
