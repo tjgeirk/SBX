@@ -5,7 +5,7 @@ import pandas_ta as ta
 import time
 
 
-tf = '5m'
+tf = '1m'
 max_leverage = 5
 take_profit = 0.2
 stop_loss = 0.1
@@ -65,7 +65,7 @@ async def process_coin(coin, positions):
                     print(f"Take-Profit at {x['percentage']*100}%")
                 if x['percentage'] >= 0.02:
                     high_price = df['high'].max()
-                    stop_price = high_price - high_price*0.02
+                    stop_price = high_price - high_price*0.02*order.lever
                     await order._place_stop_limit_order('sell', x['contracts'], stop_price)
 
             elif x['side'] == 'short':
@@ -80,7 +80,7 @@ async def process_coin(coin, positions):
                     print(f"Take-Profit at {x['percentage']*100}%")
                 if x['percentage'] >= 0.02:
                     low_price = df['low'].min()
-                    stop_price = low_price + low_price*0.02
+                    stop_price = low_price + low_price*0.02*order.lever
                     await order._place_stop_limit_order('buy', x['contracts'], stop_price)
 
 
