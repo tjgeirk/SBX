@@ -23,7 +23,6 @@ exchange = ccxt.kucoinfutures({
 
 indicators = ta.Strategy('Indicators', ta=[
     {'kind': 'ha'},
-    {'kind': 'stoch'},
     {'kind': 'ema', 'length': 200, 'close': 'close', 'prefix': 'C'},
     {'kind': 'ema', 'length': 200, 'close': 'open', 'prefix': 'O'},
     {'kind': 'ema', 'length': 8, 'close': 'close', 'prefix': 'C'},
@@ -32,7 +31,7 @@ indicators = ta.Strategy('Indicators', ta=[
 
 
 async def process_coin(coin, positions):
-    df = pd.DataFrame(await exchange.fetch_ohlcv(coin, '15m'), columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df = pd.DataFrame(await exchange.fetch_ohlcv(coin, tf), columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df.ta.strategy(indicators)
     open_ema_short = df['O_EMA_8'].iloc[-1]
     close_ema_short = df['C_EMA_8'].iloc[-1]
