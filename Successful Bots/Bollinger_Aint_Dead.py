@@ -1,8 +1,4 @@
-# "I'm John Bollinger. I'm the guy who created
-#  Bollinger Bands, and I am not dead." 
-#                        -John Bollinger, 2019
 import ta.volatility as vol
-import pandas_ta as ta
 import pandas as pd
 import ccxt.async_support as ccxt
 import asyncio
@@ -18,7 +14,7 @@ exchange = ccxt.kucoinfutures({
 PAIRLIST_LENGTH = 10
 TIMEFRAME = '15m'
 MAX_LEVERAGE = 5
-INITIAL_RISK = 0.25/PAIRLIST_LENGTH
+INITIAL_RISK = .5/PAIRLIST_LENGTH
 
 
 async def get_price_data(exchange, symbol):
@@ -80,13 +76,13 @@ async def manage_positions(x, open_orders):
         if x['side'] == 'long':
             print(
                 f'{x["symbol"]} target is {sell_target}...')
-            await exchange.create_stop_limit_order(
-                x['symbol'], 'sell', x['contracts'], sell_target, sell_target, {'closeOrder': True})
+            await exchange.create_limit_order(
+                x['symbol'], 'sell', x['contracts'], sell_target, {'closeOrder': True})
         elif x['side'] == 'short':
             print(
                 f'{x["symbol"]} target is {buy_target}...')
-            await exchange.create_stop_limit_order(
-                x['symbol'], 'buy', x['contracts'], buy_target, buy_target, {'closeOrder': True})
+            await exchange.create_limit_order(
+                x['symbol'], 'buy', x['contracts'], buy_target, {'closeOrder': True})
 
     if x['side'] == 'long' and sell_target <= x['liquidationPrice']:
         await exchange.create_market_order(x['symbol'], 'sell', x['contracts'], None, {'closeOrder': True})
@@ -140,4 +136,3 @@ while __name__ == '__main__':
     except Exception as e:
         print(e)
         continue
-
