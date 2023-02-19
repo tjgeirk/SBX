@@ -1,7 +1,6 @@
 # "I'm John Bollinger. I'm the guy who created
 #  Bollinger Bands, and I am not dead." 
 #                        -John Bollinger, 2019
-
 import ta.volatility as vol
 import pandas_ta as ta
 import pandas as pd
@@ -17,9 +16,9 @@ exchange = ccxt.kucoinfutures({
 })
 
 PAIRLIST_LENGTH = 10
-TIMEFRAME = '1m'
+TIMEFRAME = '15m'
 MAX_LEVERAGE = 5
-INITIAL_RISK = 0.5/PAIRLIST_LENGTH
+INITIAL_RISK = 0.25/PAIRLIST_LENGTH
 
 
 async def get_price_data(exchange, symbol):
@@ -62,39 +61,42 @@ async def place_orders(symbol, exchange):
     long_qty = max(1, (balance * lever / buy_target) * INITIAL_RISK)
     short_qty = max(1, (balance * lever / sell_target) * INITIAL_RISK)
 
-    if last_close < buy_target:
+    if last_close <= buy_target:
         print(f'Placing long order for {symbol} at {buy_target}...')
-        await exchange.create_stop_limit_order(
-            symbol, 'buy', long_qty, last_close, buy_target, {'leverage': lever})
+        await exchange.create_limit_order(
+            symbol, 'buy', long_qty, buy_target, {'leverage': lever})
 
-    if last_close > sell_target:
+    if last_close >= sell_target:
         print(f'Placing short order for {symbol} at {sell_target}...')
-        await exchange.create_stop_limit_order(
-            symbol, 'sell', short_qty, last_close, sell_target, {'leverage': lever})
+        await exchange.create_limit_order(
+            symbol, 'sell', short_qty, sell_target, {'leverage': lever})
 
 
-async def manage_positions(x):
-    buy_target, sell_target, last_close = await set_targets(
+async def manage_positions(x, open_orders):
+    buy_target, sell_target, _ = await set_targets(
         exchange, x['symbol'])
 
-    if x['side'] == 'long' and last_close >= sell_target:
-        print(f'Closing long position for {x["symbol"]} at {sell_target}...')
-        await exchange.create_stop_limit_order(
-            x['symbol'], 'sell', x['contracts'], last_close, sell_target, {'closeOrder': True})
-    elif x['side'] == 'short' and last_close <= buy_target:
-        print(f'Closing short position for {x["symbol"]} at {buy_target}...')
-        await exchange.create_stop_limit_order(
-            x['symbol'], 'buy', x['contracts'], last_close, buy_target, {'closeOrder': True})
+    if x['symbol'] not in open_orders:
+        if x['side'] == 'long':
+            print(
+                f'{x["symbol"]} target is {sell_target}...')
+            await exchange.create_stop_limit_order(
+                x['symbol'], 'sell', x['contracts'], sell_target, sell_target, {'closeOrder': True})
+        elif x['side'] == 'short':
+            print(
+                f'{x["symbol"]} target is {buy_target}...')
+            await exchange.create_stop_limit_order(
+                x['symbol'], 'buy', x['contracts'], buy_target, buy_target, {'closeOrder': True})
 
     if x['side'] == 'long' and sell_target <= x['liquidationPrice']:
         await exchange.create_market_order(x['symbol'], 'sell', x['contracts'], None, {'closeOrder': True})
+
     elif x['side'] == 'short' and buy_target >= x['liquidationPrice']:
         await exchange.create_market_order(x['symbol'], 'buy', x['contracts'], None, {'closeOrder': True})
 
 
-async def process_open_orders(coin):
+async def close_open_orders(x, open_orders):
     now = time.time()
-    open_orders = await exchange.fetch_open_orders(coin)
     for order in open_orders:
         if now - order['timestamp'] / 1000 > 15:
             try:
@@ -111,15 +113,21 @@ async def main():
             markets = sorted(markets.values(),
                              key=lambda x: x['info']['priceChgPct'], reverse=True)
             positions = await exchange.fetch_positions()
-            coins = [x['symbol'] for x in markets][:PAIRLIST_LENGTH]
-            coins += [x['symbol'] for x in positions]
-            tasks = [asyncio.create_task(
-                place_orders(coin, exchange)) for coin in coins]
-            tasks += [asyncio.create_task(process_open_orders(coin))
-                      for coin in coins]
-            tasks += [asyncio.create_task(manage_positions(x))
+            top_gainers = [x['symbol'] for x in markets][:PAIRLIST_LENGTH]
+            open_positions = [x['symbol'] for x in positions]
+            open_orders = [x['symbol'] for x in await exchange.fetch_open_orders(params={'stop': True})]
+
+            tasks = [asyncio.create_task(place_orders(
+                coin, exchange)) for coin in top_gainers if coin not in (open_positions or open_orders)]
+
+            tasks += [asyncio.create_task(manage_positions(x, open_orders))
                       for x in positions]
+
+            tasks += [asyncio.create_task(close_open_orders(coin, open_orders)
+                                          for coin in open_orders if coin not in (open_positions or top_gainers))]
+
             await asyncio.gather(*tasks)
+
         except Exception as e:
             print(e)
             continue
@@ -132,3 +140,4 @@ while __name__ == '__main__':
     except Exception as e:
         print(e)
         continue
+
