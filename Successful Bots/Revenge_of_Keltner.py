@@ -1,4 +1,4 @@
-import ta.volatility as vol
+from ta import volatility as vol, trend as tr, momentum as mom
 import pandas as pd
 import ccxt.async_support as ccxt
 import asyncio
@@ -11,14 +11,16 @@ exchange = ccxt.kucoinfutures({
     'adjustForTimeDifference': True,
 })
 
+
+LOOKBACK = 20
 PAIRLIST_LENGTH = 5
-TIMEFRAME = '15m'
+TIMEFRAME = '5m'
 MAX_LEVERAGE = 5
-INITIAL_RISK = 0.01
+INITIAL_RISK = 1/PAIRLIST_LENGTH
 
 
-async def get_price_data(exchange, symbol, timeframe):
-    ohlcvs = await exchange.fetch_ohlcv(symbol, timeframe)
+async def get_price_data(exchange, symbol):
+    ohlcvs = await exchange.fetch_ohlcv(symbol, TIMEFRAME)
     columns = ['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume']
     df = pd.DataFrame(ohlcvs, columns=columns)
     df['Timestamp'] = pd.to_datetime(df['Timestamp'], unit='ms')
@@ -26,80 +28,129 @@ async def get_price_data(exchange, symbol, timeframe):
     return df
 
 
-async def set_targets(exchange, symbol, timeframe, positions):
-    price_data = await get_price_data(exchange, symbol, timeframe)
-    keltner_channel = vol.KeltnerChannel(
-        high=price_data['High'], low=price_data['Low'], close=price_data['Close'], window=20, window_atr=10)
-    price_data['upper_band'] = keltner_channel.keltner_channel_hband()
-    price_data['middle_band'] = keltner_channel.keltner_channel_mband()
-    price_data['lower_band'] = keltner_channel.keltner_channel_lband()
+async def set_targets(exchange, symbol):
+    price_data = await get_price_data(exchange, symbol)
+    kc = vol.KeltnerChannel(price_data['High'], price_data['Low'], price_data['Close'], LOOKBACK)
+    price_data['upper_band'] = kc.keltner_channel_hband()
+    price_data['middle_band'] = kc.keltner_channel_mband()
+    price_data['lower_band'] = kc.keltner_channel_lband()
+    price_data['ema200'] = tr.ema_indicator(price_data['Close'], 200)
 
     last_close = price_data['Close'].iloc[-1]
-    last_middle_band = price_data['middle_band'].iloc[-1]
-    last_lower_band = price_data['lower_band'].iloc[-1]
-    last_upper_band = price_data['upper_band'].iloc[-1]
-    trend_direction = 'Up' if last_close > last_middle_band else 'Down'
+    middle = price_data['middle_band'].iloc[-1]
+    lower = price_data['lower_band'].iloc[-1]
+    upper = price_data['upper_band'].iloc[-1]
+    ema200 = price_data['ema200'].iloc[-1]
+    direction = 'Up' if last_close > middle else 'Down'
     is_trending = abs(
-        last_close - last_middle_band) > abs(last_middle_band - last_lower_band)
+        last_close - middle) > abs(middle - lower)
 
     if is_trending:
-        buy_target, sell_target = (last_middle_band, last_upper_band) if trend_direction == 'Up' else (
-            last_lower_band, last_middle_band)
+        buy_target, sell_target = (middle, upper) if direction == 'Up' else (
+            lower, middle)
     else:
-        buy_target, sell_target = (last_lower_band, last_upper_band)
+        buy_target, sell_target = (lower, upper)
 
-    await place_orders(buy_target, sell_target, symbol, exchange, positions)
+    return buy_target, sell_target, last_close, ema200, 
 
 
-async def place_orders(buy_target, sell_target, symbol, exchange, positions):
+async def place_orders(symbol, exchange):
+    buy_target, sell_target, last_close, ema200, = await set_targets(exchange, symbol)
     balance = (await exchange.fetch_balance())['free']['USDT']
     lever = min(exchange.markets[symbol]['info']['maxLeverage'], MAX_LEVERAGE)
     long_qty = max(1, (balance * lever / buy_target) * INITIAL_RISK)
     short_qty = max(1, (balance * lever / sell_target) * INITIAL_RISK)
-    side = [x['side'] for x in positions if x['symbol'] == symbol]
+    positions = await exchange.fetch_positions()
+    orders = await exchange.fetch_open_orders()
 
-    if 'long' in side:
-        await exchange.create_limit_sell_order(symbol, 1, sell_target, {'closeOrder': True})
-        await exchange.create_stop_limit_order(symbol, 'buy', long_qty, buy_target, buy_target, {'leverage': lever})
-    elif 'short' in side:
-        await exchange.create_limit_buy_order(symbol, 1, buy_target, {'closeOrder': True})
-        await exchange.create_stop_limit_order(symbol, 'sell', short_qty, sell_target, sell_target, {'leverage': lever})
-    else:
-        await exchange.create_stop_limit_order(symbol, 'buy', long_qty, buy_target, buy_target, {'leverage': lever})
-        await exchange.create_stop_limit_order(symbol, 'sell', short_qty, sell_target, sell_target, {'leverage': lever})
+    if ema200 <= last_close:
+
+        buy_orders = [x['symbol'] for x in orders if x['side'] == 'buy']
+        long_positions = [x['symbol']
+                          for x in positions if x['side'] == 'long']
+
+        if symbol not in buy_orders and symbol not in long_positions:
+
+            print(f'Placing long order for {symbol} at {buy_target}...')
+            await exchange.create_stop_limit_order(
+                symbol, 'buy', long_qty, buy_target, buy_target, {'leverage': lever})
+
+    if ema200 >= last_close:
+
+        sell_orders = [x['symbol'] for x in await exchange.fetch_open_orders() if x['side'] == 'sell']
+        short_positions = [x['symbol']
+                           for x in positions if x['side'] == 'short']
+
+        if symbol not in sell_orders and symbol not in short_positions:
+
+            print(f'Placing short order for {symbol} at {sell_target}...')
+            await exchange.create_stop_limit_order(
+                symbol, 'sell', short_qty, sell_target, sell_target, {'leverage': lever})
 
 
-async def process_open_orders(coin):
-    now = time.time()
-    open_orders = await exchange.fetch_open_orders(coin)
-    for order in open_orders:
-        if now - order['timestamp'] / 1000 > 15:
-            try:
-                await exchange.cancel_order(order['id'])
-            except ccxt.BaseError:
-                pass
+async def manage_positions(x):
+    buy_target, sell_target, last_close, ema200 = await set_targets(
+        exchange, x['symbol'])
+
+    orders = await exchange.fetch_open_orders(params={'stop': True})
+    orders += await exchange.fetch_open_orders(params={'stop': False})
+    lever = min(exchange.markets[x['symbol']]
+                ['info']['maxLeverage'], MAX_LEVERAGE)
+
+    if x['side'] == 'long':
+        sell_orders = [y['symbol'] for y in orders if y['side'] == 'sell']
+
+        if x['symbol'] not in sell_orders:
+            await exchange.create_limit_order(x['symbol'], 'sell',
+                                              x['contracts'], sell_target, {'closeOrder': True})
+
+
+    elif x['side'] == 'short':
+        buy_orders = [y['symbol'] for y in orders if y['side'] == 'buy']
+
+        if x['symbol'] not in buy_orders:
+            await exchange.create_limit_order(x['symbol'], 'buy',
+                                              x['contracts'], buy_target, {'closeOrder': True})
+
+
+    if x['side'] == 'long' and buy_target <= x['liquidationPrice']:
+        await exchange.create_market_order(x['symbol'], 'sell', x['contracts'], None, {'closeOrder': True})
+
+    elif x['side'] == 'short' and sell_target >= x['liquidationPrice']:
+        await exchange.create_market_order(x['symbol'], 'buy', x['contracts'], None, {'closeOrder': True})
+
+    for order_id in [y['id'] for y in orders if (time.time() - x['timestamp'] / 1000) > 10]:
+        try:
+            await exchange.cancel_order(order_id)
+        except ccxt.BaseError:
+            pass
 
 
 async def main():
     while True:
-        markets = await exchange.load_markets()
-        balance = await exchange.fetch_balance()
-        markets = sorted(markets.values(),
-                         key=lambda x: x['info']['priceChgPct'], reverse=True)
-        positions = await exchange.fetch_positions()
-        coins = [x['symbol'] for x in markets][:PAIRLIST_LENGTH]
-        coins += [x['symbol'] for x in positions]
-        tasks = [asyncio.create_task(set_targets(
-            exchange, coin, TIMEFRAME, positions)) for coin in coins]
-        tasks += [asyncio.create_task(process_open_orders(coin))
-                  for coin in coins]
-        await asyncio.gather(*tasks)
+        try:
+            markets = await exchange.load_markets()
+            markets = sorted(markets.values(),
+                             key=lambda x: x['info']['priceChgPct'], reverse=True)
+            positions = await exchange.fetch_positions()
+            top_gainers = [x['symbol'] for x in markets][:PAIRLIST_LENGTH]
+            tasks = [asyncio.create_task(place_orders(
+                coin, exchange)) for coin in top_gainers]
 
+            tasks += [asyncio.create_task(manage_positions(x))
+                      for x in positions]
 
-if __name__ == '__main__':
+            await asyncio.gather(*tasks)
+
+        except Exception as e:
+            print(e)
+            continue
+
+while __name__ == '__main__':
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         loop.run_until_complete(main())
     except Exception as e:
         print(e)
+        continue
